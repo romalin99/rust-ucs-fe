@@ -408,7 +408,10 @@ impl McsClient {
     ) -> Result<VerifyFinanceHistoryResp> {
         const OP: &str = "verifyPlayerInfo";
 
-        let url = format!("{}{}player/verifyPlayerInfo", self.base_url, self.base_path);
+        let url = format!(
+            "{}/{}player/verifyPlayerInfo",
+            self.base_url, self.base_path
+        );
 
         let req_body = serde_json::to_vec(req)
             .with_context(|| format!("{OP}: marshal request body failed"))?;
