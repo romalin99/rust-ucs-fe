@@ -1,0 +1,705 @@
+/// PlayerVerification service.
+///
+/// Mirrors Go's `internal/service/player_verification.go`.
+/// Contains rate limiting (Redis), WPS/USS/MCS orchestration, and scoring.
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::Result;
+use redis::AsyncCommands;
+
+use crate::client::mcs::{McsClient, PlayerHeaders, VerifyFinanceHistoryReq};
+use crate::client::uss::UssClient;
+use crate::client::wps::WpsClient;
+use crate::error::AppError;
+use crate::model::merchant_rule::{MerchantRuleConfig, Question, QuestionInfo};
+use crate::model::validation_record::{QA, QaMap, ValidationRecord};
+use crate::repository::{MerchantRuleRepository, ValidationRecordRepository};
+use crate::service::field_cache::get_field_config;
+use crate::service::finance_history::{FINANCE_SETTERS, HISTORY_SETTERS, apply_field_setters};
+use crate::types::req::{SubmitVerifyRequest, VerifyDataItem};
+use crate::types::resp::{MerchantRuleResponse, SubmitVerifyData};
+
+// ── Financial-history field IDs (must not be scored client-side) ─────────────
+
+static FINANCIAL_HISTORY_IDS: &[&str] = &[
+    "BANK_ACCOUNT",
+    "CARD_HOLDER_NAME",
+    "VIRTUAL_WALLET_ADDRESS",
+    "VIRTUAL_WALLET_NAME",
+    "E_WALLET_ACCOUNT",
+    "E_WALLET_NAME",
+    "LAST_DEPOSIT_AMOUNT",
+    "LAST_DEPOSIT_TIME",
+    "LAST_DEPOSIT_METHOD",
+    "LAST_WITHDRAWAL_AMOUNT",
+    "LAST_WITHDRAWAL_TIME",
+    "LAST_WITHDRAWAL_METHOD",
+];
+
+fn is_financial_history(field_id: &str) -> bool {
+    FINANCIAL_HISTORY_IDS.contains(&field_id)
+}
+
+// ── Redis rate-limit keys ─────────────────────────────────────────────────────
+
+// Key format mirrors Go exactly:
+//   ip_key  = "ucsfe:ql:ip:{merchantCode}@{customerName}:{customerIP}:{date}"
+//   acct_key = "ucsfe:ql:acct:{merchantCode}@{customerName}:{date}"
+fn ip_key(merchant: &str, customer: &str, ip: &str, date: &str) -> String {
+    format!("ucsfe:ql:ip:{}@{}:{}:{}", merchant, customer, ip, date)
+}
+
+fn acct_key(merchant: &str, customer: &str, date: &str) -> String {
+    format!("ucsfe:ql:acct:{}@{}:{}", merchant, customer, date)
+}
+
+fn today_key() -> String {
+    chrono::Local::now().format("%Y%m%d").to_string()
+}
+
+/// Unix timestamp of today 23:59:59 (local time).
+fn end_of_day_unix() -> i64 {
+    let now = chrono::Local::now();
+    let eod = now
+        .date_naive()
+        .and_hms_opt(23, 59, 59)
+        .expect("valid time")
+        .and_local_timezone(chrono::Local)
+        .unwrap();
+    eod.timestamp()
+}
+
+/// Atomic INCR + EXPIREAT via Lua (same script as Go version).
+const INCR_WITH_TTL_SCRIPT: &str = r#"
+local v = redis.call('INCR', KEYS[1])
+if v == 1 then
+    redis.call('EXPIREAT', KEYS[1], ARGV[1])
+end
+return v
+"#;
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct PlayerVerificationService {
+    merchant_repo: Arc<MerchantRuleRepository>,
+    validation_repo: Arc<ValidationRecordRepository>,
+    uss: Arc<UssClient>,
+    mcs: Arc<McsClient>,
+    wps: Arc<WpsClient>,
+    redis: redis::aio::ConnectionManager,
+}
+
+impl PlayerVerificationService {
+    pub fn new(
+        merchant_repo: Arc<MerchantRuleRepository>,
+        validation_repo: Arc<ValidationRecordRepository>,
+        uss: Arc<UssClient>,
+        mcs: Arc<McsClient>,
+        wps: Arc<WpsClient>,
+        redis: redis::aio::ConnectionManager,
+    ) -> Self {
+        Self {
+            merchant_repo,
+            validation_repo,
+            uss,
+            mcs,
+            wps,
+            redis,
+        }
+    }
+
+    // ── GetQuestionList ───────────────────────────────────────────────────────
+
+    pub async fn get_question_list(
+        &self,
+        merchant_code: &str,
+        customer_ip: &str,
+        customer_name: &str,
+    ) -> Result<MerchantRuleResponse, AppError> {
+        // 1. Fetch merchant rule
+        let rule = self
+            .merchant_repo
+            .find_by_merchant_code(merchant_code)
+            .await
+            .map_err(|e| AppError::Internal(e))?
+            .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
+
+        let rule_cfg = MerchantRuleConfig {
+            id: rule.id,
+            merchant_code: rule.merchant_code.clone(),
+            binding_type: rule.binding_type.clone(),
+            passing_score: rule.passing_score,
+            empty_score: rule.empty_score,
+            lock_hour: rule.lock_hour,
+            ip_retry_limit: rule.ip_retry_limit,
+            account_retry_limit: rule.account_retry_limit,
+            questions: rule
+                .questions_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default(),
+        };
+
+        // 2. Check + increment rate limits
+        self.check_and_incr_retry_limit(
+            merchant_code,
+            customer_ip,
+            customer_name,
+            rule_cfg.ip_retry_limit,
+            rule_cfg.account_retry_limit,
+        )
+        .await?;
+
+        // 3. WPS: get reset-password-status
+        let wps_resp = self
+            .wps
+            .get_reset_password_status(merchant_code)
+            .await
+            .map_err(|e| AppError::WpsApiFailed(e.to_string()))?;
+
+        if !wps_resp.success {
+            tracing::warn!(
+                merchant_code,
+                "WPS reset-password-status returned success=false"
+            );
+            return Err(AppError::WpsApiFailed("success=false".to_string()));
+        }
+
+        tracing::info!(
+            wps_email = wps_resp.value.is_email_reset_enabled,
+            wps_sms = wps_resp.value.is_sms_reset_enabled,
+            "[WPSClient] resetPasswordStatusResp"
+        );
+
+        // 4. USS: get customer
+        let full_customer_name = format!("{}@{}", merchant_code, customer_name);
+        let customer = self
+            .uss
+            .get_customer(&full_customer_name, false)
+            .await
+            .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
+
+        let verification_mode = &customer.value.profile.verification_mode.val;
+        let email_verification = customer.value.customer_additional_info.email_verification;
+
+        tracing::info!(
+            verification_mode = %verification_mode,
+            email_verification,
+            "[USS] customer info"
+        );
+
+        // 5. Business rules: email/phone already bound
+        if wps_resp.value.is_email_reset_enabled && email_verification {
+            tracing::info!("[WPS-USS] email enabled");
+            return Err(AppError::EmailAlreadyBound);
+        }
+
+        if wps_resp.value.is_sms_reset_enabled && verification_mode == "0" {
+            tracing::info!("[WPS-USS] phone enabled");
+            return Err(AppError::PhoneAlreadyBound);
+        }
+
+        // 6. Build question list (with dropdown items from field cache)
+        let questions = self.get_valid_question_infos(&rule_cfg, merchant_code);
+
+        Ok(MerchantRuleResponse {
+            merchant_code: merchant_code.to_string(),
+            questions,
+        })
+    }
+
+    // ── SubmitVerifyMaterials ─────────────────────────────────────────────────
+
+    pub async fn submit_verify_materials(
+        &self,
+        merchant_code: &str,
+        customer_ip: &str,
+        req_body: SubmitVerifyRequest,
+    ) -> Result<SubmitVerifyData, AppError> {
+        let customer_name = format!("{}@{}", merchant_code, req_body.customer_name);
+
+        // 1. Fetch customer from USS
+        let customer = self
+            .uss
+            .get_customer(&customer_name, false)
+            .await
+            .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
+
+        tracing::info!(
+            customer_id = customer.value.customer_id.val,
+            customer_name = %customer_name,
+            "CustomerInfo fetched"
+        );
+
+        // 2. Generate one-time password reset token (upfront, before scoring)
+        let token_resp = self
+            .uss
+            .generate_password_reset_token(&req_body.customer_name, merchant_code)
+            .await
+            .map_err(|e| AppError::PasswordResetFailed(e.to_string()))?;
+
+        if !token_resp.success {
+            tracing::warn!(customer_name = %customer_name, "USS GeneratePasswordResetToken returned failure");
+            return Err(AppError::PasswordResetFailed(
+                "USS returned failure".to_string(),
+            ));
+        }
+
+        let one_time_passwd = token_resp.value.clone();
+
+        // 3. Load merchant rule config
+        let rule_cfg = self
+            .merchant_repo
+            .get_rule_config(merchant_code)
+            .await
+            .map_err(|e| AppError::Internal(e))?
+            .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
+
+        // 4. Parse merchant question configuration
+        let questions_map: HashMap<String, Question> = rule_cfg
+            .questions
+            .iter()
+            .filter(|q| q.valid && !q.field_id.is_empty())
+            .map(|q| (q.field_id.clone(), q.clone()))
+            .collect();
+
+        // 5. Score profile fields
+        let mut qa_map: QaMap = HashMap::new();
+        accurate_judgment_score(
+            &req_body.data,
+            &customer,
+            &rule_cfg,
+            &mut qa_map,
+            &questions_map,
+        );
+
+        // 6. Build MCS request and call VerifyPlayerInfo
+        let mut field_id_map: HashMap<String, String> = HashMap::new();
+        let mut bind_map: HashMap<String, bool> = HashMap::new();
+        let mut mcs_req = VerifyFinanceHistoryReq::default();
+
+        for item in &req_body.data {
+            if is_financial_history(&item.item.field_id) {
+                field_id_map.insert(item.item.field_id.clone(), item.item.field_value.clone());
+                bind_map.insert(item.item.field_id.clone(), item.bind);
+            }
+        }
+        apply_field_setters(
+            FINANCE_SETTERS,
+            &mut mcs_req,
+            &field_id_map,
+            &bind_map,
+            &questions_map,
+        );
+        apply_field_setters(
+            HISTORY_SETTERS,
+            &mut mcs_req,
+            &field_id_map,
+            &bind_map,
+            &questions_map,
+        );
+
+        let mcs_headers = PlayerHeaders {
+            customer_id: customer.value.customer_id.val.to_string(),
+            customer_name: req_body.customer_name.clone(),
+            merchant: merchant_code.to_string(),
+            customer_ip: customer_ip.to_string(),
+        };
+
+        let mcs_resp = self
+            .mcs
+            .verify_player_info(&mcs_headers, &mcs_req)
+            .await
+            .map_err(|e| AppError::VerifyPlayerInfoFailed(e.to_string()))?;
+
+        tracing::info!("[MCSClient] VerifyPlayerInfo response received");
+
+        // 7. Score financial history from MCS response
+        calculate_score_for_financial_history(&mcs_resp, &rule_cfg, &mut qa_map, &questions_map);
+
+        // 8. Serialise QA map and compute total score
+        let qas_bytes = serde_json::to_string(&qa_map)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("marshal qas: {}", e)))?;
+
+        let actual_score: i32 = qa_map.values().map(|qa| qa.score).sum();
+        let score_checked = actual_score > rule_cfg.passing_score;
+
+        tracing::info!(
+            customer_id = customer.value.customer_id.val,
+            merchant_code,
+            actual_score,
+            passing_score = rule_cfg.passing_score,
+            score_checked,
+            "Score calculated"
+        );
+
+        // 9. Insert validation record
+        let record = ValidationRecord {
+            id: None,
+            customer_id: customer.value.customer_id.val,
+            customer_name: customer_name.clone(),
+            success: if score_checked { 1 } else { 0 },
+            merchant_code: merchant_code.to_string(),
+            ip: customer_ip.to_string(),
+            passing_score: rule_cfg.passing_score,
+            score: actual_score,
+            qas: qas_bytes,
+            created_at: chrono::Utc::now(),
+        };
+
+        if let Err(e) = self.validation_repo.insert(record).await {
+            tracing::warn!(error = %e, "Insert validation record failed (non-fatal)");
+        }
+
+        let mut data = SubmitVerifyData {
+            score_checked,
+            bind_type: None,
+            one_time_password: None,
+        };
+        if score_checked {
+            data.bind_type = Some(rule_cfg.binding_type.clone());
+            data.one_time_password = Some(one_time_passwd);
+        }
+
+        Ok(data)
+    }
+
+    // ── Rate limit helpers ────────────────────────────────────────────────────
+
+    async fn check_and_incr_retry_limit(
+        &self,
+        merchant: &str,
+        ip: &str,
+        customer: &str,
+        ip_limit: i32,
+        acct_limit: i32,
+    ) -> Result<(), AppError> {
+        let today = today_key();
+        let ip_k = ip_key(merchant, customer, ip, &today);
+        let ac_k = acct_key(merchant, customer, &today);
+
+        let mut c1 = self.redis.clone();
+        let mut c2 = self.redis.clone();
+
+        // Read both counters concurrently
+        let ip_k_clone = ip_k.clone();
+        let ac_k_clone = ac_k.clone();
+        let (ip_cnt, ac_cnt): (i64, i64) = {
+            let (a, b) = tokio::try_join!(
+                async {
+                    let v: Option<i64> = redis::AsyncCommands::get(&mut c1, &ip_k_clone)
+                        .await
+                        .map_err(AppError::RedisError)?;
+                    Ok::<i64, AppError>(v.unwrap_or(0))
+                },
+                async {
+                    let v: Option<i64> = redis::AsyncCommands::get(&mut c2, &ac_k_clone)
+                        .await
+                        .map_err(AppError::RedisError)?;
+                    Ok::<i64, AppError>(v.unwrap_or(0))
+                }
+            )?;
+            (a, b)
+        };
+
+        tracing::info!(
+            merchant,
+            customer,
+            ip,
+            today,
+            ip_cnt,
+            ip_limit,
+            ac_cnt,
+            acct_limit,
+            "retryLimit check"
+        );
+
+        if ip_cnt >= ip_limit as i64 || ac_cnt >= acct_limit as i64 {
+            tracing::warn!(
+                merchant,
+                customer,
+                ip,
+                today,
+                ip_cnt,
+                ip_limit,
+                ac_cnt,
+                acct_limit,
+                "question retry limit exhausted"
+            );
+            return Err(AppError::QuestionLimitExceeded);
+        }
+
+        // Atomic increment with TTL
+        let expire_at = end_of_day_unix();
+        let script = redis::Script::new(INCR_WITH_TTL_SCRIPT);
+
+        let mut incr_c1 = self.redis.clone();
+        let mut incr_c2 = self.redis.clone();
+
+        tokio::join!(
+            async {
+                if let Err(e) = script
+                    .key(&ip_k)
+                    .arg(expire_at)
+                    .invoke_async::<i64>(&mut incr_c1)
+                    .await
+                {
+                    tracing::warn!(error = %e, key = %ip_k, "redis incr failed");
+                }
+            },
+            async {
+                if let Err(e) = script
+                    .key(&ac_k)
+                    .arg(expire_at)
+                    .invoke_async::<i64>(&mut incr_c2)
+                    .await
+                {
+                    tracing::warn!(error = %e, key = %ac_k, "redis incr failed");
+                }
+            }
+        );
+
+        Ok(())
+    }
+
+    // ── Question list builder ─────────────────────────────────────────────────
+
+    fn get_valid_question_infos(
+        &self,
+        rule_cfg: &MerchantRuleConfig,
+        merchant_code: &str,
+    ) -> Vec<QuestionInfo> {
+        let dd_map = get_field_config(merchant_code);
+
+        rule_cfg
+            .questions
+            .iter()
+            .filter(|q| q.valid && !q.field_id.is_empty())
+            .map(|q| {
+                let dropdown = if q.field_attribute == "DD" {
+                    dd_map
+                        .as_ref()
+                        .and_then(|m| m.get(q.field_id.as_str()))
+                        .cloned()
+                } else {
+                    None
+                };
+                QuestionInfo {
+                    field_id: q.field_id.clone(),
+                    field_name: q.field_name.clone(),
+                    field_attribute: q.field_attribute.clone(),
+                    field_type: q.field_type.clone(),
+                    field_dropdown_list: dropdown,
+                }
+            })
+            .collect()
+    }
+}
+
+// ── Scoring helpers ───────────────────────────────────────────────────────────
+
+/// Score 32 profile fields submitted by the player against USS customer data.
+///
+/// Rules (bind=true):
+///   1. FieldValue == ""              → score 0
+///   2. FieldValue matches expected   → score = questionValue.score
+///   3. FieldValue != expected        → score 0
+///
+/// Rules (bind=false, check actual value only):
+///   1. expectedValue == ""           → score = emptyScore
+///   2. expectedValue != ""           → score 0
+fn accurate_judgment_score(
+    data_items: &[VerifyDataItem],
+    customer: &crate::client::uss::CustomerInfo,
+    rule_cfg: &MerchantRuleConfig,
+    qa_map: &mut QaMap,
+    field_id_map_cfg: &HashMap<String, Question>,
+) {
+    let p = &customer.value.profile;
+    let a = &customer.value.customer_additional_info;
+    let empty_score = rule_cfg.empty_score;
+
+    let field_lookup: HashMap<&str, String> = [
+        ("PLACE_OF_BIRTH", a.place_of_birth.val.clone()),
+        ("MARITAL_STATUS", p.marital_status.val.to_string()),
+        ("NICKNAME", p.nickname.val.clone()),
+        ("TAG_REGION", a.region.val.clone()),
+        ("QQ", p.qq_no.val.clone()),
+        ("WECHAT_ID", p.wechat.val.clone()),
+        ("LINE_ID", p.line_id.val.clone()),
+        ("FB_ID", p.face_book_id.val.clone()),
+        ("WHATSAPP", p.whats_app_id.val.clone()),
+        ("ZALO", p.zalo.val.clone()),
+        ("TELEGRAM", p.telegram.val.clone()),
+        ("VIBER", p.viber.val.clone()),
+        ("TWITTER", p.twitter.val.clone()),
+        ("EMAIL", customer.value.email.val.clone()),
+        ("MOBILE_NUMBER", p.mobile_no.val.clone()),
+        ("FIXED_ADDRESS", a.permanent_address.val.clone()),
+        ("ADDRESS", p.address.val.clone()),
+        ("WITHDRAWER_NAME", p.payee_name.val.clone()),
+        ("DATE_OF_BIRTH", p.birthday.format_date()),
+        ("NATIONALITY", a.nationality.val.clone()),
+        ("STATE", a.us_state.val.to_string()),
+        ("ID", p.id_number.val.clone()),
+        ("GENDER", p.gender.val.to_string()),
+        ("JOB", p.occupation.val.to_string()),
+        ("SOURCE_OF_INCOME", p.source_of_income.val.to_string()),
+        ("ID_TYPE", p.id_type.val.to_string()),
+        ("ZIP_CODE", p.zip_code.val.clone()),
+        ("APPLE_ID", p.apple_id.val.clone()),
+        ("KAKAO", a.kakao.val.clone()),
+        ("GOOGLE", a.google.val.clone()),
+        ("LAST_LOGIN_TIME", p.last_login_time.format_date()),
+        ("REGISTRATION_TIME", p.reg_date.format_date()),
+    ]
+    .into_iter()
+    .collect();
+
+    for data_item in data_items {
+        let field_id = &data_item.item.field_id;
+
+        if is_financial_history(field_id) {
+            continue;
+        }
+
+        let expected_value = match field_lookup.get(field_id.as_str()) {
+            Some(v) => v.as_str(),
+            None => {
+                tracing::warn!(field_id, "unknown fieldId in accurateJudgmentScore");
+                continue;
+            }
+        };
+
+        let question_cfg = match field_id_map_cfg.get(field_id) {
+            Some(q) => q,
+            None => {
+                tracing::warn!(field_id, "fieldId not in question config");
+                continue;
+            }
+        };
+
+        let submitted = &data_item.item.field_value;
+        let (score, is_correct) = if data_item.bind {
+            // bind=true
+            if submitted.is_empty() {
+                (0, false)
+            } else if submitted.eq_ignore_ascii_case(expected_value) {
+                (question_cfg.score, true)
+            } else {
+                tracing::warn!(field_id, submitted = %submitted, expected = %expected_value, "bind=true mismatch");
+                (0, false)
+            }
+        } else {
+            // bind=false: ignore submitted value, check actual
+            if expected_value.is_empty() {
+                (empty_score, false)
+            } else {
+                tracing::warn!(field_id, expected = %expected_value, "bind=false non-empty expected");
+                (0, false)
+            }
+        };
+
+        qa_map.insert(
+            field_id.clone(),
+            QA {
+                field_id: field_id.clone(),
+                field_type: question_cfg.field_type.clone(),
+                correct: is_correct,
+                score,
+                total_score: question_cfg.score,
+            },
+        );
+    }
+}
+
+/// Map MCS rawScore (3=matched, 2=empty-match, else=not-matched) → score/isCorrect.
+fn calculate_score_for_financial_history(
+    resp: &crate::client::mcs::VerifyFinanceHistoryResp,
+    rule_cfg: &MerchantRuleConfig,
+    qa_map: &mut QaMap,
+    field_id_map_cfg: &HashMap<String, Question>,
+) {
+    let empty_score = rule_cfg.empty_score;
+
+    let score_fields: &[(&str, i32)] = &[
+        (
+            "BANK_ACCOUNT",
+            resp.value.verify_player_finance_info.bc_number,
+        ),
+        (
+            "CARD_HOLDER_NAME",
+            resp.value.verify_player_finance_info.bc_holder_name,
+        ),
+        (
+            "E_WALLET_ACCOUNT",
+            resp.value.verify_player_finance_info.ew_account,
+        ),
+        (
+            "E_WALLET_NAME",
+            resp.value.verify_player_finance_info.ew_holder_name,
+        ),
+        (
+            "VIRTUAL_WALLET_ADDRESS",
+            resp.value.verify_player_finance_info.vw_address,
+        ),
+        (
+            "VIRTUAL_WALLET_NAME",
+            resp.value.verify_player_finance_info.vw_holder_name,
+        ),
+        (
+            "LAST_DEPOSIT_AMOUNT",
+            resp.value.verify_player_history_info.last_deposit_amount,
+        ),
+        (
+            "LAST_DEPOSIT_TIME",
+            resp.value.verify_player_history_info.last_deposit_time,
+        ),
+        (
+            "LAST_DEPOSIT_METHOD",
+            resp.value.verify_player_history_info.last_deposit_method,
+        ),
+        (
+            "LAST_WITHDRAWAL_AMOUNT",
+            resp.value.verify_player_history_info.last_withdraw_amount,
+        ),
+        (
+            "LAST_WITHDRAWAL_TIME",
+            resp.value.verify_player_history_info.last_withdraw_time,
+        ),
+        (
+            "LAST_WITHDRAWAL_METHOD",
+            resp.value.verify_player_history_info.last_withdraw_method,
+        ),
+    ];
+
+    for (field_id, raw_score) in score_fields {
+        let q = match field_id_map_cfg.get(*field_id) {
+            Some(q) => q,
+            None => continue,
+        };
+
+        let (score, is_correct, msg) = match *raw_score {
+            3 => (q.score, true, "Matched"),
+            2 => (empty_score, false, "Empty Match"),
+            _ => (0, false, "Not Matched"),
+        };
+
+        if !is_correct {
+            tracing::warn!(field_id, raw_score, msg, "[MCSClient] score result");
+        }
+
+        qa_map.insert(
+            field_id.to_string(),
+            QA {
+                field_id: field_id.to_string(),
+                field_type: q.field_type.clone(),
+                correct: is_correct,
+                score,
+                total_score: q.score,
+            },
+        );
+    }
+}

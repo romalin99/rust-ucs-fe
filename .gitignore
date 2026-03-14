@@ -1,0 +1,28 @@
+/target
+Cargo.lock
+
+# configs
+.env
+config/local.toml
+
+# logs
+logs/
+*.log
+
+# IDE
+.idea
+.vscode
+
+# cache
+.cache
+tmp
+
+# docker
+.docker
+
+# profiling
+perf.data*
+criterion
+
+# generated
+*.pb.rs

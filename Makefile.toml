@@ -1,0 +1,366 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ucs-fe — cargo-make task file
+# https://github.com/sagiegurari/cargo-make
+#
+# Usage:
+#   cargo make                  # fmt-check → debug build  (default)
+#   cargo make help             # list all tasks
+#   cargo make release          # release build
+#   cargo make run              # debug build → run
+#   cargo make ci               # full CI gate (fmt-check + clippy + test)
+#   cargo make ENV=sit run      # run with SIT config
+# ─────────────────────────────────────────────────────────────────────────────
+
+[config]
+# Do not inherit workspace-level Makefile.toml (stand-alone crate).
+default_to_workspace = false
+# Show a task summary when --list-all-steps is passed.
+skip_core_tasks      = false
+# Minimum cargo-make version required.
+min_version          = "0.37.0"
+
+# ── Project-wide environment variables ───────────────────────────────────────
+
+[env]
+# Application binary name (matches [[bin]] name in Cargo.toml).
+APP = "ucs-fe"
+# Active environment: dev | sit | prod.
+# Override on the command line:  cargo make ENV=prod run
+ENV = { value = "dev", condition = { env_not_set = ["ENV"] } }
+# The default task executed by a bare `cargo make` invocation.
+CARGO_MAKE_DEFAULT_TASK_NAME = "default"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEFAULT
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.default]
+description  = "Format-check then compile (debug). Run `cargo make help` for all tasks."
+dependencies = ["fmt-check", "build"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.help]
+description = "List all available tasks with their descriptions."
+script = [
+    "cargo make --list-all-steps 2>/dev/null | grep -E '^[a-z]' | sort || cargo make --list-all-steps",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP — install development toolchain extras
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.install]
+description = "Install all recommended cargo add-on tools."
+dependencies = [
+    "install-cargo-watch",
+    "install-cargo-edit",
+    "install-cargo-outdated",
+    "install-cargo-audit",
+    "install-cargo-tarpaulin",
+    "install-cargo-nextest",
+]
+
+[tasks.install-cargo-watch]
+description = "Install cargo-watch (live-reload on file changes)."
+command     = "cargo"
+args        = ["install", "cargo-watch", "--locked"]
+
+[tasks.install-cargo-edit]
+description = "Install cargo-edit (cargo add / cargo upgrade)."
+command     = "cargo"
+args        = ["install", "cargo-edit", "--locked"]
+
+[tasks.install-cargo-outdated]
+description = "Install cargo-outdated (check for stale dependencies)."
+command     = "cargo"
+args        = ["install", "cargo-outdated", "--locked"]
+
+[tasks.install-cargo-audit]
+description = "Install cargo-audit (check for CVEs in dependencies)."
+command     = "cargo"
+args        = ["install", "cargo-audit", "--locked"]
+
+[tasks.install-cargo-tarpaulin]
+description = "Install cargo-tarpaulin (code-coverage report)."
+command     = "cargo"
+args        = ["install", "cargo-tarpaulin", "--locked"]
+
+[tasks.install-cargo-nextest]
+description = "Install cargo-nextest (faster, richer test runner)."
+command     = "cargo"
+args        = ["install", "cargo-nextest", "--locked"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VERSION
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.version]
+description = "Print Rust toolchain version (mirrors Go `make version`)."
+script = [
+    "rustc  --version",
+    "cargo  --version",
+    "rustup --version",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.build]
+description = "Compile debug binary (fast iteration build)."
+command     = "cargo"
+args        = ["build", "--bin", "${APP}"]
+
+[tasks.debug]
+description = "Alias for `build` — compile debug binary with full debug info."
+alias       = "build"
+
+[tasks.release]
+description = "Compile optimised release binary (stripped, fast)."
+command     = "cargo"
+args        = ["build", "--release", "--bin", "${APP}"]
+
+[tasks.build-all]
+description = "Compile ALL targets (bins, examples, tests, benches) in debug mode."
+command     = "cargo"
+args        = ["build", "--all-targets"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUN
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.run]
+description  = "Build debug binary and run the service. ENV defaults to 'dev'."
+dependencies = ["build"]
+command      = "cargo"
+args         = ["run", "--bin", "${APP}"]
+[tasks.run.env]
+ENV = "${ENV}"
+
+[tasks.run-release]
+description  = "Build release binary and run the service."
+dependencies = ["release"]
+command      = "cargo"
+args         = ["run", "--release", "--bin", "${APP}"]
+[tasks.run-release.env]
+ENV = "${ENV}"
+
+[tasks.run-dev]
+description = "Run with ENV=dev (development config)."
+command     = "cargo"
+args        = ["run", "--bin", "${APP}"]
+[tasks.run-dev.env]
+ENV = "dev"
+
+[tasks.run-sit]
+description = "Run with ENV=sit (SIT config)."
+command     = "cargo"
+args        = ["run", "--bin", "${APP}"]
+[tasks.run-sit.env]
+ENV = "sit"
+
+[tasks.run-prod]
+description = "Run with ENV=prod (production config — use with caution)."
+command     = "cargo"
+args        = ["run", "--release", "--bin", "${APP}"]
+[tasks.run-prod.env]
+ENV = "prod"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CODE QUALITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.check]
+description = "Run `cargo check` (fast, no codegen — mirrors Go `make check`)."
+command     = "cargo"
+args        = ["check", "--all-targets"]
+
+[tasks.fmt]
+description = "Format all source files with rustfmt (mirrors Go `make fmt`)."
+command     = "cargo"
+args        = ["fmt", "--all"]
+
+[tasks.fmt-check]
+description = "Assert code is already formatted — fails in CI if not."
+command     = "cargo"
+args        = ["fmt", "--all", "--", "--check"]
+
+[tasks.clippy]
+description = "Run Clippy linter (deny warnings)."
+command     = "cargo"
+args        = ["clippy", "--all-targets", "--", "-D", "warnings"]
+
+[tasks.lint]
+description = "Alias for `clippy` — run Clippy linter (mirrors Go `make lint`)."
+alias       = "clippy"
+
+[tasks.clippy-fix]
+description = "Run Clippy and auto-apply fixes (deny warnings)."
+command     = "cargo"
+args        = [ "clippy", "--all-targets",  "--fix",  "--allow-dirty", "--allow-staged",  "--", "-D", "warnings" ]
+
+[tasks.optimize]
+description = "Auto-fix Clippy suggestions then reformat (mirrors Go `make optimize`)."
+dependencies = ["clippy-fix", "fmt"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TESTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run all unit and integration tests (mirrors Go `make test`)."
+command     = "cargo"
+args        = ["test", "--all"]
+
+[tasks.testv]
+description = "Run all tests with output visible (mirrors Go `make testv`)."
+command     = "cargo"
+args        = ["test", "--all", "--", "--nocapture"]
+
+[tasks.test-release]
+description = "Run tests in release mode (catches optimisation-dependent bugs)."
+command     = "cargo"
+args        = ["test", "--release", "--all"]
+
+[tasks.nextest]
+description = "Run tests with cargo-nextest (faster, colour output). Requires install."
+command     = "cargo"
+args        = ["nextest", "run"]
+
+[tasks.bench]
+description = "Run benchmarks (mirrors Go `make bench`)."
+command     = "cargo"
+args        = ["bench"]
+
+[tasks.cover]
+description = "Generate HTML coverage report with tarpaulin (mirrors Go `make cover`)."
+command     = "cargo"
+args        = [
+    "tarpaulin",
+    "--all-features",
+    "--workspace",
+    "--timeout", "120",
+    "--out", "Html",
+    "--output-dir", "target/coverage",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCS
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.doc]
+description = "Build rustdoc documentation and open it in the browser."
+command     = "cargo"
+args        = ["doc", "--no-deps", "--open"]
+
+[tasks.doc-check]
+description = "Build docs without opening (CI-safe doc lint check)."
+command     = "cargo"
+args        = ["doc", "--no-deps"]
+[tasks.doc-check.env]
+RUSTDOCFLAGS = "-D warnings"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECURITY & DEPENDENCIES
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.audit]
+description = "Check dependencies for known CVEs (requires cargo-audit)."
+command     = "cargo"
+args        = ["audit"]
+
+[tasks.outdated]
+description = "List outdated dependencies (requires cargo-outdated)."
+command     = "cargo"
+args        = ["outdated", "-R"]
+
+[tasks.update]
+description = "Update Cargo.lock to latest compatible versions (mirrors Go `make update`)."
+command     = "cargo"
+args        = ["update"]
+
+[tasks.upgrade]
+description = "Upgrade Cargo.toml version constraints + update lock file (requires cargo-edit)."
+script = [
+    "cargo upgrade --incompatible",
+    "cargo update",
+]
+
+[tasks.update-toolchain]
+description = "Update Rust toolchain via rustup and refresh Cargo.lock."
+script = [
+    "rustup update",
+    "cargo update",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WATCH — live-reload development (requires cargo-watch)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.watch]
+description = "Recompile on every source file change (requires cargo-watch)."
+command     = "cargo"
+args        = ["watch", "-x", "build"]
+
+[tasks.watch-run]
+description = "Recompile and restart the service on file changes."
+command     = "cargo"
+args        = ["watch", "-x", "run --bin ${APP}"]
+
+[tasks.watch-test]
+description = "Re-run all tests on file changes."
+command     = "cargo"
+args        = ["watch", "-x", "test"]
+
+[tasks.watch-check]
+description = "Re-run `cargo check` on file changes (fastest feedback loop)."
+command     = "cargo"
+args        = ["watch", "-x", "check"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLEAN
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.clean]
+description = "Remove the `target/` build directory."
+command     = "cargo"
+args        = ["clean"]
+
+[tasks.dist-clean]
+description = "Remove `target/` AND Cargo.lock (full reset)."
+dependencies = ["clean"]
+script = [
+    "rm -f Cargo.lock",
+    "echo 'dist-clean: target/ and Cargo.lock removed'",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CI GATE — single command for CI pipelines
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description  = "Full CI gate: fmt-check → clippy → test (mirrors `make all` in Go)."
+dependencies = ["fmt-check", "clippy", "test"]
+
+[tasks.ci-full]
+description  = "Extended CI gate: fmt-check → clippy → test → audit → doc-check."
+dependencies = ["fmt-check", "clippy", "test", "audit", "doc-check"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCKER / DEPLOY (stubs — fill in as the project grows)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.docker-build]
+description = "Build Docker image for the service."
+script = [
+    "docker build -t ${APP}:${ENV} .",
+]
+
+[tasks.docker-run]
+description = "Run the service inside Docker with the active ENV config."
+script = [
+    "docker run --rm -e ENV=${ENV} ${APP}:${ENV}",
+]

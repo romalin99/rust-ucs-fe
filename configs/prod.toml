@@ -1,0 +1,75 @@
+name = "rust-ucs-fe"
+env  = "prod"
+host = "0.0.0.0"
+port = 7001
+timeout = 30
+body_limit = 52_428_800
+shutdown_timeout = 30
+
+[timeouts]
+quick  = 5
+normal = 30
+long   = 60
+upload = 120
+
+[jobs.template_field_sync]
+interval = 21600
+enabled  = true
+timeout  = 3600
+
+[jobs.field_configs_loading]
+interval = 21600
+enabled  = false
+timeout  = 3600
+
+[oracle]
+user                  = ""
+passwd                = ""
+addr_connect_stringer = ""
+max_open_conn         = 200
+max_idle_conn         = 100
+max_life_time         = 30
+max_idle_time         = 30
+enable_stats_monitor  = true
+stats_interval        = 60
+read_timeout          = 15
+write_timeout         = 15
+
+[redis]
+addr        = ["TCG-UCS-REDIS:6379"]
+master_name = "mymaster"
+password    = ""
+db          = 0
+
+[[redis.dbs]]
+db                    = 2
+pool_size             = 100
+set_default_expiration = 86400
+
+[uss_service]
+host      = "http://TCG-USS-AE:7001"
+base_path = "tcg-uss-ae/"
+
+[mcs_service]
+host      = "http://TCG-MCS-FE:7001"
+base_path = "tcg-mcs-fe/"
+
+[wps_service]
+host      = "http://TCG-WPS-CORE:9007"
+base_path = "wps-core/"
+
+[log]
+level       = "warn"
+service_name = "UCS-FE-RUST"
+path        = "/var/log/ucsfeService"
+
+[pprof]
+enabled = false
+port    = 6068
+host    = "0.0.0.0"
+
+[telemetry]
+enabled     = true
+server_name = "UCS-FE-RUST"
+endpoint    = "localhost:4318"
+sampler     = 0.01
