@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 
-use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig};
+use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig, Question};
 use crate::model::template::{DropdownItem, TemplateField};
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
@@ -84,10 +84,10 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_size: 100,
-            min_idle: 0, // lazy — matches Go sql.Open
-            max_lifetime_secs: 30,
-            max_idle_time_mins: 30,
+            max_size:               100,
+            min_idle:               0,    // lazy — matches Go sql.Open
+            max_lifetime_secs:      30,
+            max_idle_time_mins:     30,
             connection_timeout_secs: 30,
         }
     }
@@ -109,7 +109,12 @@ impl Default for PoolConfig {
 ///
 /// Connectivity is validated separately via [`ping_pool`] in a background
 /// task (mirrors Go's `db.Ping()` after `sql.Open`).
-pub fn build_pool(user: &str, password: &str, connect_string: &str, cfg: PoolConfig) -> OraclePool {
+pub fn build_pool(
+    user: &str,
+    password: &str,
+    connect_string: &str,
+    cfg: PoolConfig,
+) -> OraclePool {
     let manager = OracleConnectionManager::new(user, password, connect_string);
     r2d2::Pool::builder()
         .max_size(cfg.max_size)
@@ -153,7 +158,7 @@ const RULE_COLS_FULL: &str = "ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
 
 #[derive(Clone)]
 pub struct MerchantRuleRepository {
-    pool: Arc<OraclePool>,
+    pool:         Arc<OraclePool>,
     read_timeout: Duration,
 }
 
@@ -174,23 +179,20 @@ impl MerchantRuleRepository {
     /// Map a result row (14 columns: RULE_COLS_FULL) into a [`MerchantRule`].
     fn map_full_row(row: oracle::Row) -> Result<MerchantRule> {
         Ok(MerchantRule {
-            id: row.get::<_, i64>(0).context("ID")?,
-            is_default: row.get::<_, i32>(1).unwrap_or(0) as i8,
-            merchant_code: row.get::<_, String>(2).context("MERCHANT_CODE")?,
-            operator: row
-                .get::<_, Option<String>>(3)
-                .unwrap_or_default()
-                .unwrap_or_default(),
-            ip_retry_limit: row.get::<_, i32>(4).context("IP_RETRY_LIMIT")?,
-            account_retry_limit: row.get::<_, i32>(5).context("ACCOUNT_RETRY_LIMIT")?,
-            empty_score: row.get::<_, i32>(6).context("EMPTY_SCORE")?,
-            lock_hour: row.get::<_, i32>(7).unwrap_or(0),
-            binding_type: row.get::<_, String>(8).context("BINDING_TYPE")?,
-            passing_score: row.get::<_, i32>(9).context("PASSING_SCORE")?,
-            questions_json: row.get::<_, Option<String>>(10).unwrap_or_default(),
+            id:                   row.get::<_, i64>(0).context("ID")?,
+            is_default:           row.get::<_, i32>(1).unwrap_or(0) as i8,
+            merchant_code:        row.get::<_, String>(2).context("MERCHANT_CODE")?,
+            operator:             row.get::<_, Option<String>>(3).unwrap_or_default().unwrap_or_default(),
+            ip_retry_limit:       row.get::<_, i32>(4).context("IP_RETRY_LIMIT")?,
+            account_retry_limit:  row.get::<_, i32>(5).context("ACCOUNT_RETRY_LIMIT")?,
+            empty_score:          row.get::<_, i32>(6).context("EMPTY_SCORE")?,
+            lock_hour:            row.get::<_, i32>(7).unwrap_or(0),
+            binding_type:         row.get::<_, String>(8).context("BINDING_TYPE")?,
+            passing_score:        row.get::<_, i32>(9).context("PASSING_SCORE")?,
+            questions_json:       row.get::<_, Option<String>>(10).unwrap_or_default(),
             template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
-            created_at: None,
-            updated_at: None,
+            created_at:           None,
+            updated_at:           None,
         })
     }
 
@@ -200,9 +202,12 @@ impl MerchantRuleRepository {
     ///
     /// Returns `None` when no matching row exists.
     /// Mirrors Go's `FindByMerchantCode`.
-    pub async fn find_by_merchant_code(&self, merchant_code: &str) -> Result<Option<MerchantRule>> {
-        let pool = self.pool.clone();
-        let mc = merchant_code.to_string();
+    pub async fn find_by_merchant_code(
+        &self,
+        merchant_code: &str,
+    ) -> Result<Option<MerchantRule>> {
+        let pool    = self.pool.clone();
+        let mc      = merchant_code.to_string();
         let timeout = self.read_timeout;
 
         let blocking = tokio::task::spawn_blocking(move || {
@@ -237,8 +242,8 @@ impl MerchantRuleRepository {
         merchant_code: &str,
         is_default: i32,
     ) -> Result<Option<MerchantRule>> {
-        let pool = self.pool.clone();
-        let mc = merchant_code.to_string();
+        let pool    = self.pool.clone();
+        let mc      = merchant_code.to_string();
         let timeout = self.read_timeout;
 
         let blocking = tokio::task::spawn_blocking(move || {
@@ -263,33 +268,37 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| {
-                anyhow!(
-                    "find_by_merchant_code_and_default timed out after {:?}",
-                    timeout
-                )
-            })?
+            .map_err(|_| anyhow!("find_by_merchant_code_and_default timed out after {:?}", timeout))?
             .context("spawn_blocking panicked")?
     }
 
     /// Slim version: returns only the fields required by the verification flow.
     ///
     /// Mirrors Go's `GetRuleConfigByMerchantCode`.
-    pub async fn get_rule_config(&self, merchant_code: &str) -> Result<Option<MerchantRuleConfig>> {
+    pub async fn get_rule_config(
+        &self,
+        merchant_code: &str,
+    ) -> Result<Option<MerchantRuleConfig>> {
         let rule = self.find_by_merchant_code(merchant_code).await?;
         Ok(rule.map(|r| MerchantRuleConfig {
-            id: r.id,
-            merchant_code: r.merchant_code,
-            binding_type: r.binding_type,
-            passing_score: r.passing_score,
-            empty_score: r.empty_score,
-            lock_hour: r.lock_hour,
-            ip_retry_limit: r.ip_retry_limit,
+            id:                  r.id,
+            merchant_code:       r.merchant_code,
+            binding_type:        r.binding_type,
+            passing_score:       r.passing_score,
+            empty_score:         r.empty_score,
+            lock_hour:           r.lock_hour,
+            ip_retry_limit:      r.ip_retry_limit,
             account_retry_limit: r.account_retry_limit,
+            // QUESTIONS CLOB is a JSON *object* keyed by fieldId — NOT an array.
             questions: r
                 .questions_json
                 .as_deref()
-                .and_then(|j| serde_json::from_str(j).ok())
+                .and_then(|j| {
+                    serde_json::from_str::<std::collections::HashMap<String, Question>>(j)
+                        .map_err(|e| tracing::warn!(error = %e, "get_rule_config: parse questions_json failed"))
+                        .ok()
+                        .map(|m| m.into_values().collect::<Vec<_>>())
+                })
                 .unwrap_or_default(),
         }))
     }
@@ -303,7 +312,7 @@ impl MerchantRuleRepository {
     pub async fn find_all_as_map(
         &self,
     ) -> Result<HashMap<String, HashMap<String, Vec<DropdownItem>>>> {
-        let pool = self.pool.clone();
+        let pool    = self.pool.clone();
         let timeout = self.read_timeout;
 
         let blocking = tokio::task::spawn_blocking(move || {
@@ -314,14 +323,16 @@ impl MerchantRuleRepository {
                        FROM TCG_UCS.MERCHANT_RULE \
                        WHERE TEMPLATE_FIELDS IS NOT NULL";
 
-            let rows = conn.query(sql, &[]).context("find_all_as_map query")?;
+            let rows = conn
+                .query(sql, &[])
+                .context("find_all_as_map query")?;
 
             let mut result: HashMap<String, HashMap<String, Vec<DropdownItem>>> = HashMap::new();
 
             for row_result in rows {
                 let row = row_result.context("find_all_as_map row read")?;
-                let merchant_code: String = row.get(0).context("MERCHANT_CODE")?;
-                let tf_json: Option<String> = row.get(1).unwrap_or_default();
+                let merchant_code: String        = row.get(0).context("MERCHANT_CODE")?;
+                let tf_json:       Option<String> = row.get(1).unwrap_or_default();
 
                 let json = match tf_json {
                     Some(j) if !j.is_empty() => j,
@@ -329,7 +340,7 @@ impl MerchantRuleRepository {
                 };
 
                 let fields: Vec<TemplateField> = match serde_json::from_str(&json) {
-                    Ok(f) => f,
+                    Ok(f)  => f,
                     Err(e) => {
                         tracing::warn!(
                             merchant_code = %merchant_code,
@@ -377,10 +388,10 @@ impl MerchantRuleRepository {
         merchant_code: &str,
         template_fields_json: &str,
     ) -> Result<u64> {
-        let pool = self.pool.clone();
-        let mc = merchant_code.to_string();
-        let fields_json = template_fields_json.to_string();
-        let timeout = self.read_timeout;
+        let pool         = self.pool.clone();
+        let mc           = merchant_code.to_string();
+        let fields_json  = template_fields_json.to_string();
+        let timeout      = self.read_timeout;
 
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
@@ -394,10 +405,7 @@ impl MerchantRuleRepository {
 
             let rows_affected = stmt.row_count().context("row_count")?;
             if rows_affected == 0 {
-                return Err(anyhow!(
-                    "UpdateTemplateFields: no row for merchant_code={}",
-                    mc
-                ));
+                return Err(anyhow!("UpdateTemplateFields: no row for merchant_code={}", mc));
             }
             conn.commit().context("commit UpdateTemplateFields")?;
             Ok(rows_affected)
