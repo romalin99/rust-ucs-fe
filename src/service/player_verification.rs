@@ -13,19 +13,27 @@ use crate::client::uss::UssClient;
 use crate::client::wps::WpsClient;
 use crate::error::AppError;
 use crate::model::merchant_rule::{MerchantRuleConfig, Question, QuestionInfo};
-use crate::model::validation_record::{QaMap, ValidationRecord, QA};
+use crate::model::validation_record::{QA, QaMap, ValidationRecord};
 use crate::repository::{MerchantRuleRepository, ValidationRecordRepository};
 use crate::service::field_cache::get_field_config;
-use crate::service::finance_history::{apply_field_setters, FINANCE_SETTERS, HISTORY_SETTERS};
+use crate::service::finance_history::{FINANCE_SETTERS, HISTORY_SETTERS, apply_field_setters};
 use crate::types::req::{SubmitVerifyRequest, VerifyDataItem};
 use crate::types::resp::{MerchantRuleResponse, SubmitVerifyData};
 
 // ── Financial-history field IDs (must not be scored client-side) ─────────────
 
 static FINANCIAL_HISTORY_IDS: &[&str] = &[
-    "BANK_ACCOUNT", "CARD_HOLDER_NAME", "VIRTUAL_WALLET_ADDRESS", "VIRTUAL_WALLET_NAME",
-    "E_WALLET_ACCOUNT", "E_WALLET_NAME", "LAST_DEPOSIT_AMOUNT", "LAST_DEPOSIT_TIME",
-    "LAST_DEPOSIT_METHOD", "LAST_WITHDRAWAL_AMOUNT", "LAST_WITHDRAWAL_TIME",
+    "BANK_ACCOUNT",
+    "CARD_HOLDER_NAME",
+    "VIRTUAL_WALLET_ADDRESS",
+    "VIRTUAL_WALLET_NAME",
+    "E_WALLET_ACCOUNT",
+    "E_WALLET_NAME",
+    "LAST_DEPOSIT_AMOUNT",
+    "LAST_DEPOSIT_TIME",
+    "LAST_DEPOSIT_METHOD",
+    "LAST_WITHDRAWAL_AMOUNT",
+    "LAST_WITHDRAWAL_TIME",
     "LAST_WITHDRAWAL_METHOD",
 ];
 
@@ -92,7 +100,14 @@ impl PlayerVerificationService {
         wps: Arc<WpsClient>,
         redis: redis::aio::ConnectionManager,
     ) -> Self {
-        Self { merchant_repo, validation_repo, uss, mcs, wps, redis }
+        Self {
+            merchant_repo,
+            validation_repo,
+            uss,
+            mcs,
+            wps,
+            redis,
+        }
     }
 
     // ── GetQuestionList ───────────────────────────────────────────────────────
@@ -112,17 +127,18 @@ impl PlayerVerificationService {
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
         let rule_cfg = MerchantRuleConfig {
-            id:                  rule.id,
-            merchant_code:       rule.merchant_code.clone(),
-            binding_type:        rule.binding_type.clone(),
-            passing_score:       rule.passing_score,
-            empty_score:         rule.empty_score,
-            lock_hour:           rule.lock_hour,
-            ip_retry_limit:      rule.ip_retry_limit,
+            id: rule.id,
+            merchant_code: rule.merchant_code.clone(),
+            binding_type: rule.binding_type.clone(),
+            passing_score: rule.passing_score,
+            empty_score: rule.empty_score,
+            lock_hour: rule.lock_hour,
+            ip_retry_limit: rule.ip_retry_limit,
             account_retry_limit: rule.account_retry_limit,
             // QUESTIONS CLOB is a JSON *object* keyed by fieldId — NOT an array.
             // {"MOBILE_NUMBER":{"fieldId":"MOBILE_NUMBER","valid":true,...},...}
-            questions:           rule.questions_json
+            questions: rule
+                .questions_json
                 .as_deref()
                 .and_then(|j| {
                     serde_json::from_str::<std::collections::HashMap<String, Question>>(j)
@@ -151,13 +167,16 @@ impl PlayerVerificationService {
             .map_err(|e| AppError::WpsApiFailed(e.to_string()))?;
 
         if !wps_resp.success {
-            tracing::warn!(merchant_code, "WPS reset-password-status returned success=false");
+            tracing::warn!(
+                merchant_code,
+                "WPS reset-password-status returned success=false"
+            );
             return Err(AppError::WpsApiFailed("success=false".to_string()));
         }
 
         tracing::info!(
             wps_email = wps_resp.value.is_email_reset_enabled,
-            wps_sms   = wps_resp.value.is_sms_reset_enabled,
+            wps_sms = wps_resp.value.is_sms_reset_enabled,
             "[WPSClient] resetPasswordStatusResp"
         );
 
@@ -189,8 +208,11 @@ impl PlayerVerificationService {
             return Err(AppError::PhoneAlreadyBound);
         }
 
-        // 6. Build question list (with dropdown items from field cache)
-        let questions = self.get_valid_question_infos(&rule_cfg, merchant_code);
+        // 6. Build question list (with dropdown items from field cache).
+        // Awaiting mirrors Go's GetFieldConfig → initWg.Wait() blocking.
+        let questions = self
+            .get_valid_question_infos(&rule_cfg, merchant_code)
+            .await;
 
         Ok(MerchantRuleResponse {
             merchant_code: merchant_code.to_string(),
@@ -230,7 +252,9 @@ impl PlayerVerificationService {
 
         if !token_resp.success {
             tracing::warn!(customer_name = %customer_name, "USS GeneratePasswordResetToken returned failure");
-            return Err(AppError::PasswordResetFailed("USS returned failure".to_string()));
+            return Err(AppError::PasswordResetFailed(
+                "USS returned failure".to_string(),
+            ));
         }
 
         let one_time_passwd = token_resp.value.clone();
@@ -253,7 +277,13 @@ impl PlayerVerificationService {
 
         // 5. Score profile fields
         let mut qa_map: QaMap = HashMap::new();
-        accurate_judgment_score(&req_body.data, &customer, &rule_cfg, &mut qa_map, &questions_map);
+        accurate_judgment_score(
+            &req_body.data,
+            &customer,
+            &rule_cfg,
+            &mut qa_map,
+            &questions_map,
+        );
 
         // 6. Build MCS request and call VerifyPlayerInfo
         let mut field_id_map: HashMap<String, String> = HashMap::new();
@@ -266,14 +296,26 @@ impl PlayerVerificationService {
                 bind_map.insert(item.item.field_id.clone(), item.bind);
             }
         }
-        apply_field_setters(FINANCE_SETTERS, &mut mcs_req, &field_id_map, &bind_map, &questions_map);
-        apply_field_setters(HISTORY_SETTERS, &mut mcs_req, &field_id_map, &bind_map, &questions_map);
+        apply_field_setters(
+            FINANCE_SETTERS,
+            &mut mcs_req,
+            &field_id_map,
+            &bind_map,
+            &questions_map,
+        );
+        apply_field_setters(
+            HISTORY_SETTERS,
+            &mut mcs_req,
+            &field_id_map,
+            &bind_map,
+            &questions_map,
+        );
 
         let mcs_headers = PlayerHeaders {
-            customer_id:   customer.value.customer_id.val.to_string(),
+            customer_id: customer.value.customer_id.val.to_string(),
             customer_name: req_body.customer_name.clone(),
-            merchant:      merchant_code.to_string(),
-            customer_ip:   customer_ip.to_string(),
+            merchant: merchant_code.to_string(),
+            customer_ip: customer_ip.to_string(),
         };
 
         let mcs_resp = self
@@ -305,25 +347,29 @@ impl PlayerVerificationService {
 
         // 9. Insert validation record
         let record = ValidationRecord {
-            id:            None,
-            customer_id:   customer.value.customer_id.val,
+            id: None,
+            customer_id: customer.value.customer_id.val,
             customer_name: customer_name.clone(),
-            success:       if score_checked { 1 } else { 0 },
+            success: if score_checked { 1 } else { 0 },
             merchant_code: merchant_code.to_string(),
-            ip:            customer_ip.to_string(),
+            ip: customer_ip.to_string(),
             passing_score: rule_cfg.passing_score,
-            score:         actual_score,
-            qas:           qas_bytes,
-            created_at:    chrono::Utc::now(),
+            score: actual_score,
+            qas: qas_bytes,
+            created_at: chrono::Utc::now(),
         };
 
         if let Err(e) = self.validation_repo.insert(record).await {
             tracing::warn!(error = %e, "Insert validation record failed (non-fatal)");
         }
 
-        let mut data = SubmitVerifyData { score_checked, bind_type: None, one_time_password: None };
+        let mut data = SubmitVerifyData {
+            score_checked,
+            bind_type: None,
+            one_time_password: None,
+        };
         if score_checked {
-            data.bind_type       = Some(rule_cfg.binding_type.clone());
+            data.bind_type = Some(rule_cfg.binding_type.clone());
             data.one_time_password = Some(one_time_passwd);
         }
 
@@ -341,8 +387,8 @@ impl PlayerVerificationService {
         acct_limit: i32,
     ) -> Result<(), AppError> {
         let today = today_key();
-        let ip_k  = ip_key(merchant, customer, ip, &today);
-        let ac_k  = acct_key(merchant, customer, &today);
+        let ip_k = ip_key(merchant, customer, ip, &today);
+        let ac_k = acct_key(merchant, customer, &today);
 
         let mut c1 = self.redis.clone();
         let mut c2 = self.redis.clone();
@@ -353,11 +399,15 @@ impl PlayerVerificationService {
         let (ip_cnt, ac_cnt): (i64, i64) = {
             let (a, b) = tokio::try_join!(
                 async {
-                    let v: Option<i64> = redis::AsyncCommands::get(&mut c1, &ip_k_clone).await.map_err(AppError::RedisError)?;
+                    let v: Option<i64> = redis::AsyncCommands::get(&mut c1, &ip_k_clone)
+                        .await
+                        .map_err(AppError::RedisError)?;
                     Ok::<i64, AppError>(v.unwrap_or(0))
                 },
                 async {
-                    let v: Option<i64> = redis::AsyncCommands::get(&mut c2, &ac_k_clone).await.map_err(AppError::RedisError)?;
+                    let v: Option<i64> = redis::AsyncCommands::get(&mut c2, &ac_k_clone)
+                        .await
+                        .map_err(AppError::RedisError)?;
                     Ok::<i64, AppError>(v.unwrap_or(0))
                 }
             )?;
@@ -365,15 +415,27 @@ impl PlayerVerificationService {
         };
 
         tracing::info!(
-            merchant, customer, ip, today,
-            ip_cnt, ip_limit, ac_cnt, acct_limit,
+            merchant,
+            customer,
+            ip,
+            today,
+            ip_cnt,
+            ip_limit,
+            ac_cnt,
+            acct_limit,
             "retryLimit check"
         );
 
         if ip_cnt >= ip_limit as i64 || ac_cnt >= acct_limit as i64 {
             tracing::warn!(
-                merchant, customer, ip, today,
-                ip_cnt, ip_limit, ac_cnt, acct_limit,
+                merchant,
+                customer,
+                ip,
+                today,
+                ip_cnt,
+                ip_limit,
+                ac_cnt,
+                acct_limit,
                 "question retry limit exhausted"
             );
             return Err(AppError::QuestionLimitExceeded);
@@ -388,12 +450,22 @@ impl PlayerVerificationService {
 
         tokio::join!(
             async {
-                if let Err(e) = script.key(&ip_k).arg(expire_at).invoke_async::<i64>(&mut incr_c1).await {
+                if let Err(e) = script
+                    .key(&ip_k)
+                    .arg(expire_at)
+                    .invoke_async::<i64>(&mut incr_c1)
+                    .await
+                {
                     tracing::warn!(error = %e, key = %ip_k, "redis incr failed");
                 }
             },
             async {
-                if let Err(e) = script.key(&ac_k).arg(expire_at).invoke_async::<i64>(&mut incr_c2).await {
+                if let Err(e) = script
+                    .key(&ac_k)
+                    .arg(expire_at)
+                    .invoke_async::<i64>(&mut incr_c2)
+                    .await
+                {
                     tracing::warn!(error = %e, key = %ac_k, "redis incr failed");
                 }
             }
@@ -404,12 +476,27 @@ impl PlayerVerificationService {
 
     // ── Question list builder ─────────────────────────────────────────────────
 
-    fn get_valid_question_infos(
+    /// Build the public question list for a merchant.
+    ///
+    /// Mirrors Go's `getValidQuestionInfos`:
+    ///   - filters out invalid / empty-fieldId questions
+    ///   - for DD (dropdown) fields, waits for the field-config cache to be
+    ///     populated (mirrors Go's `initWg.Wait()` inside `GetFieldConfig`)
+    ///     then attaches the dropdown items
+    async fn get_valid_question_infos(
         &self,
         rule_cfg: &MerchantRuleConfig,
         merchant_code: &str,
     ) -> Vec<QuestionInfo> {
-        let dd_map = get_field_config(merchant_code);
+        // `get_field_config` waits for the initial DB load — mirrors Go's initWg.Wait().
+        let dd_map = get_field_config(merchant_code).await;
+
+        tracing::debug!(
+            merchant_code,
+            questions = rule_cfg.questions.len(),
+            has_dd_map = dd_map.is_some(),
+            "get_valid_question_infos"
+        );
 
         rule_cfg
             .questions
@@ -417,18 +504,26 @@ impl PlayerVerificationService {
             .filter(|q| q.valid && !q.field_id.is_empty())
             .map(|q| {
                 let dropdown = if q.field_attribute == "DD" {
-                    dd_map
+                    let items = dd_map
                         .as_ref()
                         .and_then(|m| m.get(q.field_id.as_str()))
-                        .cloned()
+                        .cloned();
+                    if items.is_none() {
+                        tracing::warn!(
+                            merchant_code,
+                            field_id = %q.field_id,
+                            "DD field has no dropdown items in cache"
+                        );
+                    }
+                    items
                 } else {
                     None
                 };
                 QuestionInfo {
-                    field_id:            q.field_id.clone(),
-                    field_name:          q.field_name.clone(),
-                    field_attribute:     q.field_attribute.clone(),
-                    field_type:          q.field_type.clone(),
+                    field_id: q.field_id.clone(),
+                    field_name: q.field_name.clone(),
+                    field_attribute: q.field_attribute.clone(),
+                    field_type: q.field_type.clone(),
                     field_dropdown_list: dropdown,
                 }
             })
@@ -460,37 +555,37 @@ fn accurate_judgment_score(
     let empty_score = rule_cfg.empty_score;
 
     let field_lookup: HashMap<&str, String> = [
-        ("PLACE_OF_BIRTH",    a.place_of_birth.val.clone()),
-        ("MARITAL_STATUS",    p.marital_status.val.to_string()),
-        ("NICKNAME",          p.nickname.val.clone()),
-        ("TAG_REGION",        a.region.val.clone()),
-        ("QQ",                p.qq_no.val.clone()),
-        ("WECHAT_ID",         p.wechat.val.clone()),
-        ("LINE_ID",           p.line_id.val.clone()),
-        ("FB_ID",             p.face_book_id.val.clone()),
-        ("WHATSAPP",          p.whats_app_id.val.clone()),
-        ("ZALO",              p.zalo.val.clone()),
-        ("TELEGRAM",          p.telegram.val.clone()),
-        ("VIBER",             p.viber.val.clone()),
-        ("TWITTER",           p.twitter.val.clone()),
-        ("EMAIL",             customer.value.email.val.clone()),
-        ("MOBILE_NUMBER",     p.mobile_no.val.clone()),
-        ("FIXED_ADDRESS",     a.permanent_address.val.clone()),
-        ("ADDRESS",           p.address.val.clone()),
-        ("WITHDRAWER_NAME",   p.payee_name.val.clone()),
-        ("DATE_OF_BIRTH",     p.birthday.format_date()),
-        ("NATIONALITY",       a.nationality.val.clone()),
-        ("STATE",             a.us_state.val.to_string()),
-        ("ID",                p.id_number.val.clone()),
-        ("GENDER",            p.gender.val.to_string()),
-        ("JOB",               p.occupation.val.to_string()),
-        ("SOURCE_OF_INCOME",  p.source_of_income.val.to_string()),
-        ("ID_TYPE",           p.id_type.val.to_string()),
-        ("ZIP_CODE",          p.zip_code.val.clone()),
-        ("APPLE_ID",          p.apple_id.val.clone()),
-        ("KAKAO",             a.kakao.val.clone()),
-        ("GOOGLE",            a.google.val.clone()),
-        ("LAST_LOGIN_TIME",   p.last_login_time.format_date()),
+        ("PLACE_OF_BIRTH", a.place_of_birth.val.clone()),
+        ("MARITAL_STATUS", p.marital_status.val.to_string()),
+        ("NICKNAME", p.nickname.val.clone()),
+        ("TAG_REGION", a.region.val.clone()),
+        ("QQ", p.qq_no.val.clone()),
+        ("WECHAT_ID", p.wechat.val.clone()),
+        ("LINE_ID", p.line_id.val.clone()),
+        ("FB_ID", p.face_book_id.val.clone()),
+        ("WHATSAPP", p.whats_app_id.val.clone()),
+        ("ZALO", p.zalo.val.clone()),
+        ("TELEGRAM", p.telegram.val.clone()),
+        ("VIBER", p.viber.val.clone()),
+        ("TWITTER", p.twitter.val.clone()),
+        ("EMAIL", customer.value.email.val.clone()),
+        ("MOBILE_NUMBER", p.mobile_no.val.clone()),
+        ("FIXED_ADDRESS", a.permanent_address.val.clone()),
+        ("ADDRESS", p.address.val.clone()),
+        ("WITHDRAWER_NAME", p.payee_name.val.clone()),
+        ("DATE_OF_BIRTH", p.birthday.format_date()),
+        ("NATIONALITY", a.nationality.val.clone()),
+        ("STATE", a.us_state.val.to_string()),
+        ("ID", p.id_number.val.clone()),
+        ("GENDER", p.gender.val.to_string()),
+        ("JOB", p.occupation.val.to_string()),
+        ("SOURCE_OF_INCOME", p.source_of_income.val.to_string()),
+        ("ID_TYPE", p.id_type.val.to_string()),
+        ("ZIP_CODE", p.zip_code.val.clone()),
+        ("APPLE_ID", p.apple_id.val.clone()),
+        ("KAKAO", a.kakao.val.clone()),
+        ("GOOGLE", a.google.val.clone()),
+        ("LAST_LOGIN_TIME", p.last_login_time.format_date()),
         ("REGISTRATION_TIME", p.reg_date.format_date()),
     ]
     .into_iter()
@@ -543,9 +638,9 @@ fn accurate_judgment_score(
         qa_map.insert(
             field_id.clone(),
             QA {
-                field_id:    field_id.clone(),
-                field_type:  question_cfg.field_type.clone(),
-                correct:     is_correct,
+                field_id: field_id.clone(),
+                field_type: question_cfg.field_type.clone(),
+                correct: is_correct,
                 score,
                 total_score: question_cfg.score,
             },
@@ -563,18 +658,54 @@ fn calculate_score_for_financial_history(
     let empty_score = rule_cfg.empty_score;
 
     let score_fields: &[(&str, i32)] = &[
-        ("BANK_ACCOUNT",         resp.value.verify_player_finance_info.bc_number),
-        ("CARD_HOLDER_NAME",     resp.value.verify_player_finance_info.bc_holder_name),
-        ("E_WALLET_ACCOUNT",     resp.value.verify_player_finance_info.ew_account),
-        ("E_WALLET_NAME",        resp.value.verify_player_finance_info.ew_holder_name),
-        ("VIRTUAL_WALLET_ADDRESS", resp.value.verify_player_finance_info.vw_address),
-        ("VIRTUAL_WALLET_NAME",  resp.value.verify_player_finance_info.vw_holder_name),
-        ("LAST_DEPOSIT_AMOUNT",  resp.value.verify_player_history_info.last_deposit_amount),
-        ("LAST_DEPOSIT_TIME",    resp.value.verify_player_history_info.last_deposit_time),
-        ("LAST_DEPOSIT_METHOD",  resp.value.verify_player_history_info.last_deposit_method),
-        ("LAST_WITHDRAWAL_AMOUNT", resp.value.verify_player_history_info.last_withdraw_amount),
-        ("LAST_WITHDRAWAL_TIME", resp.value.verify_player_history_info.last_withdraw_time),
-        ("LAST_WITHDRAWAL_METHOD", resp.value.verify_player_history_info.last_withdraw_method),
+        (
+            "BANK_ACCOUNT",
+            resp.value.verify_player_finance_info.bc_number,
+        ),
+        (
+            "CARD_HOLDER_NAME",
+            resp.value.verify_player_finance_info.bc_holder_name,
+        ),
+        (
+            "E_WALLET_ACCOUNT",
+            resp.value.verify_player_finance_info.ew_account,
+        ),
+        (
+            "E_WALLET_NAME",
+            resp.value.verify_player_finance_info.ew_holder_name,
+        ),
+        (
+            "VIRTUAL_WALLET_ADDRESS",
+            resp.value.verify_player_finance_info.vw_address,
+        ),
+        (
+            "VIRTUAL_WALLET_NAME",
+            resp.value.verify_player_finance_info.vw_holder_name,
+        ),
+        (
+            "LAST_DEPOSIT_AMOUNT",
+            resp.value.verify_player_history_info.last_deposit_amount,
+        ),
+        (
+            "LAST_DEPOSIT_TIME",
+            resp.value.verify_player_history_info.last_deposit_time,
+        ),
+        (
+            "LAST_DEPOSIT_METHOD",
+            resp.value.verify_player_history_info.last_deposit_method,
+        ),
+        (
+            "LAST_WITHDRAWAL_AMOUNT",
+            resp.value.verify_player_history_info.last_withdraw_amount,
+        ),
+        (
+            "LAST_WITHDRAWAL_TIME",
+            resp.value.verify_player_history_info.last_withdraw_time,
+        ),
+        (
+            "LAST_WITHDRAWAL_METHOD",
+            resp.value.verify_player_history_info.last_withdraw_method,
+        ),
     ];
 
     for (field_id, raw_score) in score_fields {
@@ -584,7 +715,7 @@ fn calculate_score_for_financial_history(
         };
 
         let (score, is_correct, msg) = match *raw_score {
-            3 => (q.score, true,  "Matched"),
+            3 => (q.score, true, "Matched"),
             2 => (empty_score, false, "Empty Match"),
             _ => (0, false, "Not Matched"),
         };
@@ -596,9 +727,9 @@ fn calculate_score_for_financial_history(
         qa_map.insert(
             field_id.to_string(),
             QA {
-                field_id:    field_id.to_string(),
-                field_type:  q.field_type.clone(),
-                correct:     is_correct,
+                field_id: field_id.to_string(),
+                field_type: q.field_type.clone(),
+                correct: is_correct,
                 score,
                 total_score: q.score,
             },

@@ -530,21 +530,17 @@ impl UssClient {
     ) -> Result<CustomerInfo> {
         let base = format!("{}/{}customer", self.base_url, self.base_path);
 
-        // Pre-build the encoded URL via reqwest's query builder (.build() does not send).
-        // This gives us proper percent-encoding (@ → %40) without extra dependencies.
-        let encoded_url = self
-            .inner
-            .get(&base)
-            .query(&[
-                ("customerName", customer_name),
-                ("force", if force { "true" } else { "false" }),
-            ])
-            .build()
-            .with_context(|| {
-                format!("USS GetCustomer: failed to build URL for '{customer_name}'")
-            })?
-            .url()
-            .to_string();
+        // Build the encoded URL using the `url` crate's `query_pairs_mut()`.
+        // This gives proper percent-encoding (e.g. `@` → `%40`) and avoids
+        // relying on reqwest::RequestBuilder::query() which varies across versions.
+        let encoded_url = {
+            let mut url = reqwest::Url::parse(&base)
+                .with_context(|| format!("USS GetCustomer: invalid base URL: {base}"))?;
+            url.query_pairs_mut()
+                .append_pair("customerName", customer_name)
+                .append_pair("force", if force { "true" } else { "false" });
+            url.to_string()
+        };
 
         tracing::info!(url = %encoded_url, "[USSClient] GetCustomer request");
 
