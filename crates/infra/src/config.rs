@@ -9,8 +9,8 @@
 //!
 //! 1. Command-line flag `-f <path>` — passed as the `path` argument to `AppConfig::load`.
 //! 2. `ENV` environment variable (`dev` | `sit` | `prod`) — auto-maps to
-//!    `./configs/{env}.toml`.
-//! 3. Hard-coded fallback: `./configs/dev.toml`.
+//!    `./config/{env}.toml`.
+//! 3. Hard-coded fallback: `./config/dev.toml`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -50,10 +50,18 @@ impl Default for OracleConfig {
     }
 }
 
-fn default_max_open() -> u32 { 100 }
-fn default_max_idle() -> Option<u32> { Some(10) }
-fn default_read_timeout() -> u64 { 15 }
-fn default_write_timeout() -> u64 { 15 }
+fn default_max_open() -> u32 {
+    100
+}
+fn default_max_idle() -> Option<u32> {
+    Some(10)
+}
+fn default_read_timeout() -> u64 {
+    15
+}
+fn default_write_timeout() -> u64 {
+    15
+}
 
 /// Redis Sentinel connection settings.
 ///
@@ -77,7 +85,9 @@ pub struct RedisConfig {
     pub pool_size: u32,
 }
 
-fn default_pool() -> u32 { 50 }
+fn default_pool() -> u32 {
+    50
+}
 
 /// Downstream HTTP service (USS / MCS).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -103,9 +113,15 @@ pub struct LogConfig {
     pub mode: String,
 }
 
-fn default_log_level() -> String { "info".to_string() }
-fn default_log_format() -> String { "text".to_string() }
-fn default_log_mode() -> String { "console".to_string() }
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_log_format() -> String {
+    "text".to_string()
+}
+fn default_log_mode() -> String {
+    "console".to_string()
+}
 
 impl Default for LogConfig {
     fn default() -> Self {
@@ -154,10 +170,18 @@ pub struct AppTimeouts {
     pub upload: u64,
 }
 
-fn default_quick() -> u64 { 5 }
-fn default_normal() -> u64 { 30 }
-fn default_long() -> u64 { 60 }
-fn default_upload() -> u64 { 120 }
+fn default_quick() -> u64 {
+    5
+}
+fn default_normal() -> u64 {
+    30
+}
+fn default_long() -> u64 {
+    60
+}
+fn default_upload() -> u64 {
+    120
+}
 
 impl Default for AppTimeouts {
     fn default() -> Self {
@@ -185,8 +209,12 @@ pub struct RateLimitConfig {
     pub per_path_rps: u32,
 }
 
-fn default_global_rps() -> u32 { 800 }
-fn default_path_rps() -> u32 { 500 }
+fn default_global_rps() -> u32 {
+    800
+}
+fn default_path_rps() -> u32 {
+    500
+}
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
@@ -212,8 +240,12 @@ pub struct JobConfig {
     pub enabled: bool,
 }
 
-fn default_interval() -> u64 { 60 }
-fn default_job_timeout() -> u64 { 30 }
+fn default_interval() -> u64 {
+    60
+}
+fn default_job_timeout() -> u64 {
+    30
+}
 
 // ── Top-level AppConfig ───────────────────────────────────────────────────────
 
@@ -259,20 +291,34 @@ pub struct AppConfig {
     pub jobs: HashMap<String, JobConfig>,
 }
 
-fn default_name() -> String { "tcg-ucs-fe".to_string() }
-fn default_env() -> String { "prod".to_string() }
-fn default_host() -> String { "0.0.0.0".to_string() }
-fn default_port() -> u16 { 7009 }
-fn default_timeout() -> u64 { 30 }
-fn default_shutdown() -> u64 { 30 }
-fn default_body_limit() -> usize { 10 * 1024 * 1024 * 5 } // 50 MiB
+fn default_name() -> String {
+    "tcg-ucs-fe".to_string()
+}
+fn default_env() -> String {
+    "prod".to_string()
+}
+fn default_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_port() -> u16 {
+    7009
+}
+fn default_timeout() -> u64 {
+    30
+}
+fn default_shutdown() -> u64 {
+    30
+}
+fn default_body_limit() -> usize {
+    10 * 1024 * 1024 * 5
+} // 50 MiB
 
 impl AppConfig {
     /// Load configuration.
     ///
     /// `path` is the explicit config file path (from the `-f` CLI flag).
     /// When `path` is empty, the `ENV` environment variable is used to pick
-    /// `./configs/{dev|sit|prod}.toml`, defaulting to `dev` if unset.
+    /// `./config/{dev|sit|prod}.toml`, defaulting to `dev` if unset.
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let resolved = resolve_config_path(path);
         tracing::info!("Loading config from: {}", resolved);
@@ -302,15 +348,13 @@ fn resolve_config_path(explicit: &str) -> String {
         return explicit.to_string();
     }
 
-    let env = std::env::var("ENV")
-        .unwrap_or_default()
-        .to_lowercase();
+    let env = std::env::var("ENV").unwrap_or_default().to_lowercase();
 
     let file_name = match env.as_str() {
-        "dev"  => "dev.toml",
-        "sit"  => "sit.toml",
+        "dev" => "dev.toml",
+        "sit" => "sit.toml",
         "prod" => "prod.toml",
-        _      => {
+        _ => {
             eprintln!(
                 "[config] ENV='{}' unrecognised or unset; falling back to dev.toml",
                 env
@@ -320,7 +364,7 @@ fn resolve_config_path(explicit: &str) -> String {
     };
 
     // Search the same paths as Go's viper config.
-    for base in &[".", "./configs", "../configs", "../../configs"] {
+    for base in &[".", "./config", "../config", "../../config"] {
         let path = format!("{}/{}", base, file_name);
         if std::path::Path::new(&path).exists() {
             return path;
@@ -329,5 +373,5 @@ fn resolve_config_path(explicit: &str) -> String {
 
     // Last resort — hand the path to `config` crate and let it fail with a
     // meaningful error message.
-    format!("./configs/{}", file_name)
+    format!("./config/{}", file_name)
 }

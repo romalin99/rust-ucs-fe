@@ -26,7 +26,7 @@
 ```
 rust-ucs-fe/
 ├── Cargo.toml
-├── configs/
+├── config/
 │   ├── dev.toml          # 开发环境
 │   ├── sit.toml          # SIT 环境
 │   └── prod.toml         # 生产环境
@@ -99,11 +99,11 @@ export RUST_LOG=info
 cd rust-ucs-fe
 
 # 开发模式
-cargo run -- -f ./configs/dev.toml
+cargo run -- -f ./config/dev.toml
 
 # 发布构建
 cargo build --release
-./target/release/ucs-fe -f ./configs/prod.toml
+./target/release/ucs-fe -f ./config/prod.toml
 ```
 
 ---

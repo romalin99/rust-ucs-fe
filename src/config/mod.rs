@@ -204,7 +204,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Load config from `configs/{env}.toml`.
+    /// Load config from `config/{env}.toml`.
     /// `env` defaults to the `ENV` environment variable, falling back to `"dev"`.
     pub fn load() -> Result<Self> {
         let env = std::env::var("ENV").unwrap_or_else(|_| "dev".to_string());
@@ -214,16 +214,16 @@ impl AppConfig {
     pub fn load_for_env(env: &str) -> Result<Self> {
         let cfg = config::Config::builder()
             .add_source(
-                config::File::with_name(&format!("configs/{}", env))
+                config::File::with_name(&format!("config/{}", env))
                     .format(config::FileFormat::Toml)
                     .required(true),
             )
             .add_source(config::Environment::with_prefix("APP").separator("__"))
             .build()
-            .with_context(|| format!("Failed to load config from configs/{env}.toml"))?;
+            .with_context(|| format!("Failed to load config from config/{env}.toml"))?;
 
         cfg.try_deserialize()
-            .with_context(|| format!("Failed to deserialise config from configs/{env}.toml"))
+            .with_context(|| format!("Failed to deserialise config from config/{env}.toml"))
     }
 
     /// Update oracle credentials from AWS Secrets Manager and return a new config.
