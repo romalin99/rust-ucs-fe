@@ -21,8 +21,8 @@ use axum::{
 };
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts, SummaryVec,
-    register_counter_vec, register_gauge_vec, register_histogram_vec, register_summary_vec,
+    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts,
+    register_counter_vec, register_gauge_vec, register_histogram_vec,
 };
 use std::time::Instant;
 
@@ -48,17 +48,19 @@ static REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     .expect("http_request_duration_seconds registration failed")
 });
 
-static REQUEST_SIZE: Lazy<SummaryVec> = Lazy::new(|| {
-    register_summary_vec!(
-        Opts::new("http_request_size_bytes", "HTTP request size in bytes"),
+static REQUEST_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        HistogramOpts::new("http_request_size_bytes", "HTTP request size in bytes")
+            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0]),
         &["method", "path", "status"]
     )
     .expect("http_request_size_bytes registration failed")
 });
 
-static RESPONSE_SIZE: Lazy<SummaryVec> = Lazy::new(|| {
-    register_summary_vec!(
-        Opts::new("http_response_size_bytes", "HTTP response size in bytes"),
+static RESPONSE_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        HistogramOpts::new("http_response_size_bytes", "HTTP response size in bytes")
+            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0]),
         &["method", "path", "status"]
     )
     .expect("http_response_size_bytes registration failed")

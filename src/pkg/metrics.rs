@@ -1,14 +1,21 @@
-/// Prometheus metrics for Oracle/Redis pool monitoring.
+/// Prometheus metrics for Oracle/Redis/Kafka pool monitoring + standalone metrics server.
 ///
 /// Mirrors Go's `pkg/metrics/` package:
 ///   - `oracle_metrics.go` → [`OraclePoolMetrics`]
 ///   - `redis_metrics.go`  → [`RedisPoolMetrics`]
+///   - `kafka_metrics.go`  → [`KafkaMetrics`]
 ///   - `metrics.go`        → [`init`]
+///   - `server.go`         → [`MetricsServer`]
 ///
-/// All gauge vectors are registered once via `OnceLock`.
+/// All gauge/counter vectors are registered once via `OnceLock`.
+use std::net::SocketAddr;
 use std::sync::OnceLock;
 
-use prometheus::{GaugeVec, Opts, Registry, register_gauge_vec_with_registry};
+use prometheus::{
+    CounterVec, GaugeVec, Opts, Registry,
+    register_counter_vec_with_registry, register_gauge_vec_with_registry,
+};
+use tracing::{error, info};
 
 // ── Oracle pool metrics ───────────────────────────────────────────────────────
 
@@ -92,14 +99,68 @@ impl RedisPoolMetrics {
     }
 }
 
+// ── Kafka commit metrics ──────────────────────────────────────────────────────
+
+/// Prometheus counters/gauges for Kafka offset-commit monitoring.
+///
+/// Mirrors Go's `pkg/metrics/kafka_metrics.go`.
+pub struct KafkaMetrics {
+    /// Total successful Kafka offset commits.
+    pub commit_success_total:       CounterVec,
+    /// Total Kafka offset commits that failed after retries.
+    pub commit_failures_total:      CounterVec,
+    /// Total Kafka offset commit retry attempts.
+    pub commit_retries_total:       CounterVec,
+    /// Current consecutive Kafka offset commit failures.
+    pub commit_consecutive_failures: GaugeVec,
+}
+
+impl KafkaMetrics {
+    fn new(registry: &Registry) -> Self {
+        let c = |name: &str, help: &str| {
+            register_counter_vec_with_registry!(
+                Opts::new(name, help),
+                &["group", "topic"],
+                registry
+            ).unwrap_or_else(|_| CounterVec::new(Opts::new(name, help), &["group", "topic"]).unwrap())
+        };
+        let g = |name: &str, help: &str| {
+            register_gauge_vec_with_registry!(
+                Opts::new(name, help),
+                &["group", "topic"],
+                registry
+            ).unwrap_or_else(|_| GaugeVec::new(Opts::new(name, help), &["group", "topic"]).unwrap())
+        };
+
+        Self {
+            commit_success_total:        c("kafka_commit_success_total",
+                                           "Total number of successful Kafka offset commits"),
+            commit_failures_total:       c("kafka_commit_failures_total",
+                                           "Total number of Kafka offset commits that failed after retries"),
+            commit_retries_total:        c("kafka_commit_retries_total",
+                                           "Total number of Kafka offset commit retry attempts"),
+            commit_consecutive_failures: g("kafka_commit_consecutive_failures",
+                                           "Current number of consecutive Kafka offset commit failures"),
+        }
+    }
+
+    /// Report whether Kafka metrics have been initialised.
+    ///
+    /// Mirrors Go's `KafkaMetricsEnabled()`.
+    pub fn enabled() -> bool {
+        METRICS.get().is_some()
+    }
+}
+
 // ── Global singleton ─────────────────────────────────────────────────────────
 
 pub struct AppMetrics {
     pub oracle: OraclePoolMetrics,
     pub redis:  RedisPoolMetrics,
+    pub kafka:  KafkaMetrics,
 }
 
-static METRICS: OnceLock<AppMetrics> = OnceLock::new();
+pub static METRICS: OnceLock<AppMetrics> = OnceLock::new();
 
 /// Initialise all metric families once, scoped to `service_name`.
 ///
@@ -111,6 +172,7 @@ pub fn init(_service_name: &str) {
         AppMetrics {
             oracle: OraclePoolMetrics::new(registry),
             redis:  RedisPoolMetrics::new(registry),
+            kafka:  KafkaMetrics::new(registry),
         }
     });
 }
@@ -118,4 +180,68 @@ pub fn init(_service_name: &str) {
 /// Get a reference to the global metrics (panics if `init` not called first).
 pub fn get() -> &'static AppMetrics {
     METRICS.get().expect("metrics not initialised — call pkg::metrics::init() first")
+}
+
+// ── Standalone Prometheus HTTP server ────────────────────────────────────────
+
+/// Standalone HTTP server that exposes `/metrics` via the default Prometheus registry.
+///
+/// Mirrors Go's `pkg/metrics/server.go` `Server` struct.
+///
+/// In the Axum-based application the `/metrics` route is already registered
+/// in the main router via `axum-prometheus`.  This struct is provided for
+/// environments that need a *separate* metrics endpoint on a different port
+/// (e.g. side-car scraping configurations).
+pub struct MetricsServer {
+    addr: SocketAddr,
+}
+
+impl MetricsServer {
+    /// Create a metrics server bound to the given address.
+    ///
+    /// Mirrors Go's `NewMetricsServer(addr string, logger *zap.Logger)`.
+    pub fn new(addr: SocketAddr) -> Self {
+        Self { addr }
+    }
+
+    /// Launch the metrics server in a background `tokio::spawn` task.
+    ///
+    /// Mirrors Go's `Server.Start()`.
+    pub fn start(self) {
+        let addr = self.addr;
+        tokio::spawn(async move {
+            use axum::{Router, routing::get};
+
+            let app = Router::new().route("/metrics", get(|| async {
+                use prometheus::{Encoder, TextEncoder};
+                let encoder = TextEncoder::new();
+                let metric_families = prometheus::gather();
+                let mut buf = Vec::new();
+                if let Err(e) = encoder.encode(&metric_families, &mut buf) {
+                    error!("metrics encode failed: {e}");
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "encode error".to_string(),
+                    );
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    String::from_utf8_lossy(&buf).into_owned(),
+                )
+            }));
+
+            let listener = match tokio::net::TcpListener::bind(addr).await {
+                Ok(l)  => l,
+                Err(e) => {
+                    error!("metrics server bind failed on {addr}: {e}");
+                    return;
+                }
+            };
+
+            info!(%addr, "metrics server started");
+            if let Err(e) = axum::serve(listener, app).await {
+                error!("metrics server error: {e}");
+            }
+        });
+    }
 }

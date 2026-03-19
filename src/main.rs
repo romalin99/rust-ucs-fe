@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
 
     // ── 8. Axum router ────────────────────────────────────────────────────────
     let state = AppState::new(cfg.clone(), verification_svc);
-    let app = router::build_router(state, cfg.timeouts.quick);
+    let app = router::build_router(state, cfg.timeouts.quick, cfg.port as u16);
 
     let addr = format!("{}:{}", cfg.host, cfg.port);
     let listener = tokio::net::TcpListener::bind(&addr)

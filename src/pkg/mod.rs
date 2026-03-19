@@ -11,18 +11,22 @@
 /// | `pkg/gos`                | `pkg::concurrency`     | Goroutine pool, safe spawn    |
 /// | `pkg/memstatus`          | `pkg::memstats`        | Periodic memory stats logging |
 /// | `pkg/metrics`            | `pkg::metrics`         | Oracle/Redis pool metrics     |
-/// | `pkg/logs`               | _replaced_             | Use `tracing` crate           |
-/// | `pkg/kafka`              | _not ported_           | Not used in this service      |
+/// | `pkg/logs`               | `pkg::logs`            | Global logging API wrappers   |
+/// | `pkg/kafka`              | `pkg::kafka`           | Config, stubs, topic consts   |
 /// | `pkg/oracle`             | _via repository_       | Pool in `repository/`         |
 /// | `pkg/redis`              | _via infra_            | Client in `infra/`            |
-/// | `pkg/bigcache`           | _not ported_           | Go in-process cache specific  |
-/// | `pkg/pprof`              | _not ported_           | Go profiling specific         |
-/// | `pkg/conv/db_field.go`   | _not ported_           | `sql.Null*` → `Option<T>`     |
+/// | `pkg/bigcache`           | `config::BigCacheConfig` | Struct in config module     |
+/// | `pkg/pprof`              | `config::PprofConfig`  | Struct in config module       |
+/// | `pkg/conv/db_field.go`   | `pkg::conv`            | `Option<T>` null-safe helpers |
+/// | `pkg/zlog`               | `pkg::zlog`            | Custom encoder + init wrapper |
 
 pub mod concurrency;
 pub mod constant;
 pub mod conv;
 pub mod helper;
+pub mod kafka;
+pub mod logs;
 pub mod math;
 pub mod memstats;
 pub mod metrics;
+pub mod zlog;

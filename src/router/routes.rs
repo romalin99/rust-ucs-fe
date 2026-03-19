@@ -42,14 +42,15 @@ use tower_http::{cors::CorsLayer, timeout::TimeoutLayer};
 
 pub use crate::app_state::AppState;
 use crate::handler;
-use crate::middleware::{RecoverLayer, behavior_logger};
+use crate::middleware::{RecoverLayer, behavior_logger, error_handler, otel_trace};
+use crate::router::swagger;
 
 // ── Router builder ────────────────────────────────────────────────────────────
 
 /// Build the full Axum router.
 ///
 /// Mirrors Go's `NewRouter(...)`.
-pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
+pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64, port: u16) -> Router {
     let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
 
     // ── Rate-limit configs ────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
     //   2. RecoverLayer — catches panics
     //   3. CORS
     //   4. BehaviorLogger
-    Router::new()
+    let router = Router::new()
         .merge(system_router)
         .nest("/tcg-ucs-fe", api_router)
         .layer(
@@ -144,7 +145,13 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
                 .layer(prometheus_layer)
                 .layer(RecoverLayer)
                 .layer(CorsLayer::permissive())
+                .layer(middleware::from_fn(error_handler))
+                .layer(middleware::from_fn(otel_trace))
                 .layer(middleware::from_fn(behavior_logger)),
         )
-        .with_state(state)
+        .with_state(state);
+
+    // Register Swagger info route.
+    // Mirrors Go's `router.Init(fiberApp, &cfg)`.
+    swagger::register(router, port)
 }

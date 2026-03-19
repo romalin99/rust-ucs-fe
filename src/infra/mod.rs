@@ -8,16 +8,114 @@
 /// Holds every runtime resource (Oracle pool, Redis, HTTP clients,
 /// repositories) that services and handlers need.  The single
 /// `Arc<AppInfra>` is created in `main` and cloned into `AppState`.
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use once_cell::sync::OnceCell;
 use redis::aio::ConnectionManager as RedisManager;
 
 use crate::client::{McsClient, UssClient, WpsClient};
-use crate::config::{AppConfig, OracleConnectInfo};
+use crate::config::{AppConfig, OracleConnectInfo, RedisDbEntry};
 use crate::repository::{
     MerchantRuleRepository, OraclePool, PoolConfig, ValidationRecordRepository, build_pool,
     ping_pool,
 };
+
+// ── Redis multi-DB singleton ──────────────────────────────────────────────────
+
+/// A single Redis DB instance with its configured default TTL.
+/// Mirrors Go's `redis.RedisInstance`.
+#[derive(Clone)]
+pub struct RedisInstance {
+    pub client: Arc<redis::Client>,
+    pub ttl:    Duration,
+}
+
+static REDIS_DB_MAP: OnceCell<HashMap<String, RedisInstance>> = OnceCell::new();
+
+/// Initialise the global multi-DB Redis map.
+/// Mirrors Go's `Config.InitDBSV2()`.
+pub fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &[RedisDbEntry]) {
+    REDIS_DB_MAP.get_or_init(|| {
+        let mut map = HashMap::with_capacity(dbs.len());
+        let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
+        for db_entry in dbs {
+            let url = if cfg_password.is_empty() {
+                format!("redis://{}/{}", addr, db_entry.db)
+            } else {
+                format!("redis://:{}@{}/{}", cfg_password, addr, db_entry.db)
+            };
+            match redis::Client::open(url.as_str()) {
+                Ok(client) => {
+                    let key = format!("dbidx:{}", db_entry.db);
+                    let ttl = Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
+                    map.insert(key, RedisInstance { client: Arc::new(client), ttl });
+                    tracing::info!(db = db_entry.db, "Redis DB instance initialised");
+                }
+                Err(e) => tracing::error!(db = db_entry.db, err = %e, "Redis DB client failed"),
+            }
+        }
+        map
+    });
+}
+
+/// Retrieve a Redis DB instance by index.
+/// Mirrors Go's `redis.GetDbInstance(idx int32)`.
+pub fn get_db_instance(idx: i32) -> anyhow::Result<&'static RedisInstance> {
+    let key = format!("dbidx:{}", idx);
+    REDIS_DB_MAP
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("Redis multi-DB map not initialised"))?
+        .get(&key)
+        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
+}
+
+// ── Oracle pool stats monitor ─────────────────────────────────────────────────
+
+/// Background task that logs Oracle r2d2 pool stats periodically.
+/// Mirrors Go's `oracle.Config.monitorOraclePool` goroutine.
+pub fn start_oracle_pool_monitor(
+    pool:          Arc<OraclePool>,
+    interval_secs: u64,
+    desc:          &'static str,
+) -> tokio::sync::watch::Sender<bool> {
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    let secs = if interval_secs == 0 { 60 } else { interval_secs };
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let st   = pool.state();
+                    let max_sz = pool.max_size();
+                    let in_use = st.connections.saturating_sub(st.idle_connections);
+                    let idle   = st.idle_connections;
+                    let open   = st.connections;
+                    let rate   = if max_sz > 0 { (in_use as f64) / (max_sz as f64) * 100.0 } else { 0.0 };
+                    tracing::info!(desc, max_open = max_sz, open, in_use, idle,
+                        use_rate = format!("{:.1}%", rate), "Oracle pool stats");
+                    if rate > 80.0 {
+                        tracing::warn!(desc, in_use, max_open = max_sz,
+                            "Oracle pool reached warning level (80%)");
+                    }
+                    if let Some(m) = crate::pkg::metrics::METRICS.get() {
+                        let lbl = &[desc];
+                        m.oracle.max_open.with_label_values(lbl).set(max_sz as f64);
+                        m.oracle.open.with_label_values(lbl).set(open as f64);
+                        m.oracle.in_use.with_label_values(lbl).set(in_use as f64);
+                        m.oracle.idle.with_label_values(lbl).set(idle as f64);
+                        m.oracle.usage_rate.with_label_values(lbl).set(rate);
+                    }
+                }
+                _ = stop_rx.changed() => { tracing::info!(desc, "Oracle pool monitor stopped"); return; }
+            }
+        }
+    });
+    stop_tx
+}
 
 // ── Re-exports for structural parity with Go's infra package ─────────────────
 
