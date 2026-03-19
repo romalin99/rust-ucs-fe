@@ -519,8 +519,8 @@ impl UssClient {
     ///
     /// **URL**: `GET {host}/{basePath}customer?customerName={name}&force={force}`
     ///
-    /// Special characters in `customerName` (e.g. `@` in `merchant@player`) are
-    /// percent-encoded automatically, matching curl's `%40` encoding.
+    /// `@` in `customerName` (e.g. `merchant@player`) is sent **raw** (not
+    /// percent-encoded), matching Go's `fmt.Sprintf` URL construction exactly.
     ///
     /// Mirrors Go's `Client.GetCustomer`.
     pub async fn get_customer(
@@ -528,19 +528,15 @@ impl UssClient {
         customer_name: &str,
         force: bool,
     ) -> Result<CustomerInfo> {
-        let base = format!("{}/{}customer", self.base_url, self.base_path);
-
-        // Build the encoded URL using the `url` crate's `query_pairs_mut()`.
-        // This gives proper percent-encoding (e.g. `@` → `%40`) and avoids
-        // relying on reqwest::RequestBuilder::query() which varies across versions.
-        let encoded_url = {
-            let mut url = reqwest::Url::parse(&base)
-                .with_context(|| format!("USS GetCustomer: invalid base URL: {base}"))?;
-            url.query_pairs_mut()
-                .append_pair("customerName", customer_name)
-                .append_pair("force", if force { "true" } else { "false" });
-            url.to_string()
-        };
+        // Build the URL exactly like Go: fmt.Sprintf("%s/%scustomer?customerName=%s&force=%t", ...)
+        // Using raw string concatenation preserves the literal `@` character.
+        let encoded_url = format!(
+            "{}/{}customer?customerName={}&force={}",
+            self.base_url,
+            self.base_path,
+            customer_name,
+            force
+        );
 
         tracing::info!(url = %encoded_url, "[USSClient] GetCustomer request");
 

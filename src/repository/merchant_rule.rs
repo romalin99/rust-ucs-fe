@@ -416,4 +416,204 @@ impl MerchantRuleRepository {
             .map_err(|_| anyhow!("update_template_fields timed out after {:?}", timeout))?
             .context("spawn_blocking panicked")?
     }
+    // ── Additional CRUD mirrors ───────────────────────────────────────────────
+
+    /// Map an Oracle result row (using RULE_COLS_FULL column order) to `MerchantRule`.
+    ///
+    /// Column indices (0-based):
+    ///   0:ID 1:IS_DEFAULT 2:MERCHANT_CODE 3:OPERATOR
+    ///   4:IP_RETRY_LIMIT 5:ACCOUNT_RETRY_LIMIT 6:EMPTY_SCORE
+    ///   7:LOCK_HOUR 8:BINDING_TYPE 9:PASSING_SCORE
+    ///   10:QUESTIONS 11:TEMPLATE_FIELDS 12:CREATED_AT 13:UPDATED_AT
+    fn map_rule_row(row: oracle::Row) -> anyhow::Result<MerchantRule> {
+        Ok(MerchantRule {
+            id:                   row.get::<_, i64>(0).context("ID")?,
+            is_default:           row.get::<_, i32>(1).unwrap_or(0) as i8,
+            merchant_code:        row.get::<_, String>(2).context("MERCHANT_CODE")?,
+            operator:             row.get::<_, String>(3).unwrap_or_default(),
+            ip_retry_limit:       row.get::<_, i32>(4).unwrap_or(0),
+            account_retry_limit:  row.get::<_, i32>(5).unwrap_or(0),
+            empty_score:          row.get::<_, i32>(6).unwrap_or(0),
+            lock_hour:            row.get::<_, i32>(7).unwrap_or(0),
+            binding_type:         row.get::<_, String>(8).unwrap_or_default(),
+            passing_score:        row.get::<_, i32>(9).unwrap_or(0),
+            questions_json:       row.get::<_, Option<String>>(10).unwrap_or_default(),
+            template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
+            created_at:           row.get::<_, Option<chrono::NaiveDateTime>>(12)
+                .unwrap_or_default()
+                .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
+            updated_at:           row.get::<_, Option<chrono::NaiveDateTime>>(13)
+                .unwrap_or_default()
+                .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
+        })
+    }
+
+    /// Find a single merchant rule by primary key.  Mirrors Go's `FindOne`.
+    pub async fn find_one(&self, id: i64) -> Result<Option<MerchantRule>> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let sql  = format!(
+                "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1",
+                RULE_COLS_FULL
+            );
+            let rows = conn.query(&sql, &[&id]).context("FindOne query")?;
+            for row_result in rows {
+                return Ok(Some(Self::map_rule_row(row_result.context("FindOne row")?)?));
+            }
+            Ok(None)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_one timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Return all MERCHANT_CODE values in the table.  Mirrors Go's `GetAllMerchantCodes`.
+    pub async fn get_all_merchant_codes(&self) -> Result<Vec<String>> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let rows = conn.query("SELECT MERCHANT_CODE FROM TCG_UCS.MERCHANT_RULE", &[])
+                .context("GetAllMerchantCodes query")?;
+            let mut out = Vec::new();
+            for row_result in rows {
+                let row:  oracle::Row = row_result.context("row")?;
+                let code: String      = row.get(0).context("MERCHANT_CODE")?;
+                out.push(code);
+            }
+            Ok(out)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("get_all_merchant_codes timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Insert a new merchant rule and return the generated `ID`.
+    ///
+    /// Fetches the next sequence value first, then inserts — mirrors Go's `Insert`.
+    pub async fn insert(&self, rule: MerchantRule) -> Result<i64> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn   = pool.get().context("Oracle pool: get connection")?;
+            let new_id = conn
+                .query_row_as::<i64>("SELECT SEQ_MERCHANT_RULE.NEXTVAL FROM DUAL", &[])
+                .context("SEQ_MERCHANT_RULE.NEXTVAL")?;
+
+            let sql = "INSERT INTO TCG_UCS.MERCHANT_RULE \
+                        (ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
+                         IP_RETRY_LIMIT, ACCOUNT_RETRY_LIMIT, EMPTY_SCORE, \
+                         LOCK_HOUR, BINDING_TYPE, PASSING_SCORE, QUESTIONS, \
+                         CREATED_AT, UPDATED_AT) \
+                       VALUES \
+                        (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, \
+                         SYSTIMESTAMP, SYSTIMESTAMP)";
+
+            conn.execute(sql, &[
+                &new_id,
+                &rule.is_default,
+                &rule.merchant_code,
+                &rule.operator,
+                &rule.ip_retry_limit,
+                &rule.account_retry_limit,
+                &rule.empty_score,
+                &rule.lock_hour,
+                &rule.binding_type,
+                &rule.passing_score,
+                &rule.questions_json,
+            ]).context("MerchantRule INSERT execute")?;
+
+            conn.commit().context("MerchantRule INSERT commit")?;
+            Ok(new_id)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("merchant_rule insert timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Full UPDATE of a merchant rule row by primary key.  Mirrors Go's `Update`.
+    pub async fn update(&self, rule: MerchantRule) -> Result<u64> {
+        let id      = rule.id;
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let sql  = "UPDATE TCG_UCS.MERCHANT_RULE SET \
+                            IS_DEFAULT          = :1, \
+                            MERCHANT_CODE       = :2, \
+                            OPERATOR            = :3, \
+                            IP_RETRY_LIMIT      = :4, \
+                            ACCOUNT_RETRY_LIMIT = :5, \
+                            EMPTY_SCORE         = :6, \
+                            LOCK_HOUR           = :7, \
+                            BINDING_TYPE        = :8, \
+                            PASSING_SCORE       = :9, \
+                            QUESTIONS           = :10, \
+                            UPDATED_AT          = SYSTIMESTAMP \
+                        WHERE ID = :11";
+
+            let stmt = conn.execute(sql, &[
+                &rule.is_default,
+                &rule.merchant_code,
+                &rule.operator,
+                &rule.ip_retry_limit,
+                &rule.account_retry_limit,
+                &rule.empty_score,
+                &rule.lock_hour,
+                &rule.binding_type,
+                &rule.passing_score,
+                &rule.questions_json,
+                &id,
+            ]).context("MerchantRule UPDATE execute")?;
+
+            let rows = stmt.row_count().context("row_count")?;
+            if rows == 0 {
+                return Err(anyhow!("MerchantRule UPDATE: no row for id={}", id));
+            }
+            conn.commit().context("MerchantRule UPDATE commit")?;
+            Ok(rows)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("merchant_rule update timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Delete a merchant rule row by primary key.  Mirrors Go's `Delete`.
+    pub async fn delete(&self, id: i64) -> Result<u64> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let stmt = conn
+                .execute("DELETE FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1", &[&id])
+                .context("MerchantRule DELETE execute")?;
+            let rows = stmt.row_count().context("row_count")?;
+            if rows == 0 {
+                return Err(anyhow!("MerchantRule DELETE: no row for id={}", id));
+            }
+            conn.commit().context("MerchantRule DELETE commit")?;
+            Ok(rows)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("merchant_rule delete timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
 }

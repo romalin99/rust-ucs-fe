@@ -6,6 +6,8 @@ mod handler;
 mod infra;
 mod middleware;
 mod model;
+mod observability;
+mod pkg;
 mod repository;
 mod router;
 mod service;
@@ -21,6 +23,8 @@ use app_state::AppState;
 use config::AppConfig;
 use infra::AppInfra;
 use service::{CommonCronJobs, InitLoadingData, PlayerVerificationService};
+use observability::FlightRecorder;
+use pkg::memstats;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Entry point
@@ -46,6 +50,22 @@ async fn main() -> Result<()> {
     // ── 2. Logging ────────────────────────────────────────────────────────────
     telemetry::init_tracing(&cfg.log);
     tracing::info!(env = %env, version = env!("CARGO_PKG_VERSION"), "Configuration loaded");
+
+    // ── 2a. Memory stats background task (mirrors Go: go memstatus.MemStats(ctx)) ──
+    // Periodically logs process memory usage to the tracing subscriber.
+    let mem_stats_handle = memstats::start_mem_stats();
+
+    // ── 2b. Flight recorder (mirrors Go: observability.NewFlightRecorder()) ────────
+    // Listens for SIGUSR1/SIGUSR2 and dumps a diagnostic snapshot on demand.
+    let flight_recorder = FlightRecorder::new()
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to start FlightRecorder: {e} — continuing without it");
+            // Build a no-op recorder that never dumps.
+            FlightRecorder::with_config(observability::FlightRecorderConfig {
+                output_dir: "/tmp/traces".to_string(),
+                ..Default::default()
+            }).expect("fallback FlightRecorder")
+        });
 
     // ── 3. AWS Secrets Manager → Oracle credentials ───────────────────────────
     //
@@ -128,7 +148,7 @@ async fn main() -> Result<()> {
     // Go order: Fiber → pprof → FlightRecorder → cronJobs → fieldLoader → com → cfg
     // Rust order (no pprof / FlightRecorder needed):
     //   cron jobs → field loader → infra drop
-    ordered_shutdown(cron_jobs, field_loader).await;
+    ordered_shutdown(cron_jobs, field_loader, flight_recorder, mem_stats_handle).await;
 
     tracing::info!("✓ rust-ucs-fe shut down gracefully");
     Ok(())
@@ -171,7 +191,12 @@ async fn shutdown_signal() {
 ///   1. Stop cron jobs.
 ///   2. Stop field-config loader.
 ///   (Infrastructure connections are dropped when `AppInfra` goes out of scope.)
-async fn ordered_shutdown(cron_jobs: CommonCronJobs, field_loader: InitLoadingData) {
+async fn ordered_shutdown(
+    cron_jobs:       CommonCronJobs,
+    field_loader:    InitLoadingData,
+    flight_recorder: FlightRecorder,
+    mem_stats:       memstats::StopHandle,
+) {
     tracing::info!("Stopping cron jobs...");
     cron_jobs.stop_all();
     tracing::info!("Cron jobs stopped");
@@ -179,6 +204,14 @@ async fn ordered_shutdown(cron_jobs: CommonCronJobs, field_loader: InitLoadingDa
     tracing::info!("Stopping field-config loader...");
     field_loader.stop();
     tracing::info!("Field-config loader stopped");
+
+    tracing::info!("Stopping flight recorder...");
+    flight_recorder.stop();
+    tracing::info!("Flight recorder stopped");
+
+    tracing::info!("Stopping memory stats...");
+    mem_stats.stop();
+    tracing::info!("Memory stats stopped");
 
     tracing::info!("Infrastructure connections will be released when dropped");
 }

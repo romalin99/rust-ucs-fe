@@ -57,7 +57,10 @@ where
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        // Clone the inner service so it can be moved into the async block.
+        // Extract method and path before moving `req` into the future.
+        let method = req.method().clone();
+        let path   = req.uri().path().to_string();
+
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
@@ -71,7 +74,6 @@ where
             match result {
                 Ok(response) => response,
                 Err(payload) => {
-                    // Extract a human-readable panic message if possible.
                     let msg: String = if let Some(s) = payload.downcast_ref::<String>() {
                         s.clone()
                     } else if let Some(s) = payload.downcast_ref::<&str>() {
@@ -80,7 +82,9 @@ where
                         "unknown panic".to_string()
                     };
 
-                    tracing::error!("[PANIC] handler panicked: {msg}");
+                    // Log with method + path, mirroring Go:
+                    //   logs.Err(c, "[PANIC] %s %s => %v", c.Method(), c.Path(), r)
+                    tracing::error!("[PANIC] {} {} => {}", method, path, msg);
 
                     let body = json!({
                         "success":   false,
