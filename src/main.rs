@@ -1,3 +1,23 @@
+// Ported Go functionality: many items are defined but not yet all wired up.
+// Suppress warnings during this porting phase.
+#![allow(dead_code, unused_imports)]
+
+/// Application entry point.
+///
+/// Start-up sequence mirrors Go's `newApplication` + `main` in `cmd/api/main.go`:
+///   1. Load config (`config/{ENV}.toml`, ENV env-var)
+///   2. Init structured logging (`telemetry::init_tracing`)
+///   3. Load Oracle credentials (AWS Secrets Manager → config fallback)
+///   4. Build all infrastructure (Oracle pool, Redis, HTTP clients, repos)
+///   5. Start field-config loader (initial load + 30-min periodic refresh)
+///   6. Start cron scheduler
+///   7. Build domain service → AppState → router
+///   8. Bind listener; serve with graceful shutdown on SIGINT / SIGTERM
+use std::{net::SocketAddr, sync::Arc};
+
+use tokio::{net::TcpListener, signal};
+use tracing::info;
+
 mod app_state;
 mod client;
 mod config;
@@ -14,158 +34,174 @@ mod service;
 mod telemetry;
 mod types;
 
-use std::sync::Arc;
+use crate::{
+    app_state::AppState,
+    config::{AppConfig, OracleConnectInfo, load_oracle_connect_info},
+    infra::AppInfra,
+    observability::FlightRecorder,
+    router::build_router,
+    service::{CommonCronJobs, InitLoadingData, PlayerVerificationService},
+};
 
-use anyhow::{Context, Result};
-use tokio::signal;
+// ── Application container ─────────────────────────────────────────────────────
 
-use app_state::AppState;
-use config::AppConfig;
-use infra::AppInfra;
-use service::{CommonCronJobs, InitLoadingData, PlayerVerificationService};
-use observability::FlightRecorder;
-use pkg::memstats;
+/// Holds all runtime components in dependency order.
+/// Mirrors Go's `application` struct in `cmd/api/main.go`.
+struct Application {
+    infra:           Arc<AppInfra>,
+    cron_jobs:       CommonCronJobs,
+    field_loader:    InitLoadingData,
+    flight_recorder: Option<FlightRecorder>,
+    router:          axum::Router,
+    cfg:             AppConfig,
+}
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Entry point
-// ═══════════════════════════════════════════════════════════════════════════════
+impl Application {
+    /// Builds all layers in dependency order:
+    ///   infra → repos → field cache → cron → service → state → router
+    ///
+    /// Mirrors Go's `newApplication`.
+    async fn new(cfg: AppConfig) -> anyhow::Result<Self> {
+        // ── Flight recorder (SIGUSR1/SIGUSR2 → diagnostic snapshot) ──────────
+        let flight_recorder = FlightRecorder::new()
+            .map_err(|e| tracing::warn!(error = %e, "flight recorder failed to start"))
+            .ok();
 
-/// @title          REST API — UCS-FE (Rust/Axum port)
-/// @version        2.0
-/// @description    Player Self-Service Password Reset
-/// @host           localhost:7009
-/// @BasePath       /tcg-ucs-fe
+        // ── Oracle credentials ────────────────────────────────────────────────
+        // Mirrors Go's `buildInfra` → `c.LoadOracleConnectInfoFromAws(envStr)`.
+        // Falls back to values already present in the TOML config if AWS fails
+        // (useful in local / dev environments).
+        let oracle_info = load_oracle_connect_info(&cfg.env).await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "AWS oracle creds load failed — falling back to config values"
+                );
+                OracleConnectInfo {
+                    user:           cfg.oracle.user.clone(),
+                    password:       cfg.oracle.password.clone(),
+                    connect_string: cfg.oracle.connect_string.clone(),
+                }
+            });
+
+        // ── Infrastructure (Oracle pool, Redis, HTTP clients, repos) ─────────
+        let infra = Arc::new(AppInfra::new(&cfg, &oracle_info).await?);
+
+        // ── Field-config loader (initial load + 30-min periodic refresh) ─────
+        // Mirrors Go's `service.NewInitLoadingData(com)`.
+        let field_loader = InitLoadingData::start(infra.merchant_repo.clone());
+
+        // ── Cron scheduler ────────────────────────────────────────────────────
+        // Mirrors Go's `service.NewCommonCronJobs(cfg, com)`.
+        let cron_jobs = CommonCronJobs::start(&cfg.jobs, infra.merchant_repo.clone());
+
+        // ── Domain service ────────────────────────────────────────────────────
+        // Mirrors Go's `service.NewPlayerVerificationService(cfg, com)`.
+        let player_svc = PlayerVerificationService::new(
+            infra.merchant_repo.clone(),
+            infra.validation_repo.clone(),
+            infra.uss.clone(),
+            infra.mcs.clone(),
+            infra.wps.clone(),
+            infra.redis.clone(),
+        );
+
+        // ── Handlers → state → router ─────────────────────────────────────────
+        let state  = AppState::new(Arc::new(cfg.clone()), Arc::new(player_svc));
+        let router = build_router(state, cfg.timeouts.quick);
+
+        Ok(Self { infra, cron_jobs, field_loader, flight_recorder, router, cfg })
+    }
+
+    /// Graceful shutdown in reverse dependency order.
+    /// Mirrors Go's `gracefulShutdown`.
+    async fn shutdown(self) {
+        info!("graceful shutdown starting...");
+
+        self.cron_jobs.stop_all();
+        info!("cron scheduler stopped");
+
+        self.field_loader.stop();
+        info!("field config loader stopped");
+
+        if let Some(fr) = self.flight_recorder {
+            fr.stop();
+            info!("flight recorder stopped");
+        }
+
+        // AppInfra connections close when the last Arc drops.
+        drop(self.infra);
+        info!("infrastructure connections closed");
+
+        info!("graceful shutdown complete");
+    }
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+/// @title    REST API Document for UCS-FE (Rust/Axum)
+/// @version  2.0
+/// @host     localhost:7009
+/// @basePath /tcg-ucs-fe
 #[tokio::main]
-async fn main() -> Result<()> {
-    // ── 1. Config ─────────────────────────────────────────────────────────────
-    // ENV env-var selects the TOML file (dev / sit / prod).
-    // Falls back to "dev" so local development works without extra setup.
-    let env = std::env::var("ENV").unwrap_or_else(|_| "dev".to_string());
-
-    let cfg = AppConfig::load_for_env(&env).unwrap_or_else(|e| {
-        eprintln!("[FATAL] failed to load config for env={env}: {e}");
-        std::process::exit(1);
+async fn main() -> anyhow::Result<()> {
+    // ── Config ────────────────────────────────────────────────────────────────
+    // Priority: ENV env-var → config/{env}.toml → built-in defaults.
+    // Mirrors Go's `cfg.Init("")`.
+    let cfg = AppConfig::load().unwrap_or_else(|e| {
+        eprintln!("config load failed ({e}) — using built-in defaults");
+        AppConfig::default()
     });
 
-    // ── 2. Logging ────────────────────────────────────────────────────────────
+    // ── Structured logging ────────────────────────────────────────────────────
+    // Must happen BEFORE any `tracing::*` calls.
+    // Mirrors Go's `cfg.InitLog()` + `zlog.Init(cfg)`.
     telemetry::init_tracing(&cfg.log);
-    tracing::info!(env = %env, version = env!("CARGO_PKG_VERSION"), "Configuration loaded");
 
-    // ── 2a. Memory stats background task (mirrors Go: go memstatus.MemStats(ctx)) ──
-    // Periodically logs process memory usage to the tracing subscriber.
-    let mem_stats_handle = memstats::start_mem_stats();
+    let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port).parse()?;
 
-    // ── 2b. Flight recorder (mirrors Go: observability.NewFlightRecorder()) ────────
-    // Listens for SIGUSR1/SIGUSR2 and dumps a diagnostic snapshot on demand.
-    let flight_recorder = FlightRecorder::new()
-        .unwrap_or_else(|e| {
-            tracing::warn!("Failed to start FlightRecorder: {e} — continuing without it");
-            // Build a no-op recorder that never dumps.
-            FlightRecorder::with_config(observability::FlightRecorderConfig {
-                output_dir: "/tmp/traces".to_string(),
-                ..Default::default()
-            }).expect("fallback FlightRecorder")
-        });
+    // ── Build application ─────────────────────────────────────────────────────
+    info!("building application...");
+    let app = Application::new(cfg).await?;
 
-    // ── 3. AWS Secrets Manager → Oracle credentials ───────────────────────────
-    //
-    // Mirrors Go's `buildInfra → c.LoadOracleConnectInfoFromAws(envStr)`:
-    //   env  → secret path
-    //   dev  → tcg-uad/db/go-ucs-fe/dev
-    //   sit  → tcg-uad/db/go-ucs-fe/sit
-    //   prod → tcg-uad/db/go-ucs-fe
-    //
-    // Requires env vars (set before starting):
-    //   AWS_ACCESS_KEY_ID
-    //   AWS_SECRET_ACCESS_KEY
-    //   AWS_REGION  (e.g. ap-southeast-1)
-    tracing::info!(
-        "Loading Oracle credentials from AWS Secrets Manager (env={})",
-        env
-    );
-    let oracle_info = config::load_oracle_connect_info(&env)
-        .await
-        .context("LoadOracleConnectInfoFromAws failed")?;
-    tracing::info!(user = %oracle_info.user, "Oracle credentials loaded");
+    // ── Bind listener ─────────────────────────────────────────────────────────
+    let listener = TcpListener::bind(addr).await?;
 
-    // ── 4. Infrastructure (Oracle + Redis + HTTP clients + repositories) ──────
-    //
-    // Mirrors Go's `NewComManager(odbCfg, ussCfg, mcsCfg, wpsCfg, rdsCfg)`.
-    let infra = Arc::new(
-        AppInfra::new(&cfg, &oracle_info)
-            .await
-            .context("AppInfra::new failed")?,
-    );
-    tracing::info!("Infrastructure initialised");
+    info!("═══════════════════════════════════════════════════");
+    info!("  UCS-FE  (Rust/Axum)");
+    info!("  listening on  http://{}", addr);
+    info!("  metrics       http://{}/metrics",  addr);
+    info!("  swagger       http://{}/swagger/", addr);
+    info!("  liveness      http://{}/livez",    addr);
+    info!("  readiness     http://{}/readyz",   addr);
+    info!("═══════════════════════════════════════════════════");
 
-    let cfg = Arc::new(cfg);
-
-    // ── 5. Services ───────────────────────────────────────────────────────────
-    let verification_svc = Arc::new(PlayerVerificationService::new(
-        infra.merchant_repo.clone(),
-        infra.validation_repo.clone(),
-        infra.uss.clone(),
-        infra.mcs.clone(),
-        infra.wps.clone(),
-        infra.redis.clone(),
-    ));
-
-    // ── 6. Field-config cache (async initial load + 30-min refresh) ──────────
-    // Mirrors Go's `service.NewInitLoadingData(com)`.
-    let field_loader = InitLoadingData::start(infra.merchant_repo.clone());
-
-    // ── 7. Cron jobs ──────────────────────────────────────────────────────────
-    // Mirrors Go's `service.NewCommonCronJobs(cfg, com)`.
-    let cron_jobs = CommonCronJobs::start(&cfg.jobs, infra.merchant_repo.clone());
-
-    // ── 8. Axum router ────────────────────────────────────────────────────────
-    let state = AppState::new(cfg.clone(), verification_svc);
-    let app = router::build_router(state, cfg.timeouts.quick, cfg.port as u16);
-
-    let addr = format!("{}:{}", cfg.host, cfg.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .with_context(|| format!("Failed to bind to {addr}"))?;
-
-    display_startup_banner(&cfg, &addr, &env);
-
-    // ── 9. Serve with graceful shutdown ───────────────────────────────────────
-    //
-    // `into_make_service_with_connect_info` makes `ConnectInfo<SocketAddr>`
-    // available in every request's extensions.  tower_governor's
-    // PeerIpKeyExtractor (used by GovernorLayer) depends on this; without it
-    // every request returns "Unable To Extract Key!" and is rejected.
+    // ── Serve with graceful shutdown ─────────────────────────────────────────
+    // `into_make_service_with_connect_info` injects `ConnectInfo<SocketAddr>`
+    // into every request, which tower-governor's key extractors may need as
+    // a fallback when proxy headers are absent.
     axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        app.router
+            .clone()
+            .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("Axum server error")?;
+    .await?;
 
-    // ── 10. Ordered shutdown (mirrors Go's gracefulShutdown) ──────────────────
-    //
-    // Go order: Fiber → pprof → FlightRecorder → cronJobs → fieldLoader → com → cfg
-    // Rust order (no pprof / FlightRecorder needed):
-    //   cron jobs → field loader → infra drop
-    ordered_shutdown(cron_jobs, field_loader, flight_recorder, mem_stats_handle).await;
-
-    tracing::info!("✓ rust-ucs-fe shut down gracefully");
+    app.shutdown().await;
     Ok(())
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Shutdown helpers
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── Shutdown signal handler ───────────────────────────────────────────────────
 
-/// Wait for SIGINT (Ctrl-C) or SIGTERM.
-///
-/// Mirrors Go's `signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)`.
+/// Waits for SIGINT (Ctrl-C) or SIGTERM (systemd / k8s).
+/// Mirrors Go's signal channel in `gracefulShutdown`.
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler");
+            .expect("failed to install Ctrl-C handler");
     };
 
     #[cfg(unix)]
@@ -180,57 +216,9 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c    => tracing::info!("Received SIGINT, initiating graceful shutdown..."),
-        _ = terminate => tracing::info!("Received SIGTERM, initiating graceful shutdown..."),
+        _ = ctrl_c    => info!("received SIGINT"),
+        _ = terminate => info!("received SIGTERM"),
     }
-}
 
-/// Stop all background tasks in the correct order.
-///
-/// Mirrors Go's `gracefulShutdown` inner goroutine:
-///   1. Stop cron jobs.
-///   2. Stop field-config loader.
-///   (Infrastructure connections are dropped when `AppInfra` goes out of scope.)
-async fn ordered_shutdown(
-    cron_jobs:       CommonCronJobs,
-    field_loader:    InitLoadingData,
-    flight_recorder: FlightRecorder,
-    mem_stats:       memstats::StopHandle,
-) {
-    tracing::info!("Stopping cron jobs...");
-    cron_jobs.stop_all();
-    tracing::info!("Cron jobs stopped");
-
-    tracing::info!("Stopping field-config loader...");
-    field_loader.stop();
-    tracing::info!("Field-config loader stopped");
-
-    tracing::info!("Stopping flight recorder...");
-    flight_recorder.stop();
-    tracing::info!("Flight recorder stopped");
-
-    tracing::info!("Stopping memory stats...");
-    mem_stats.stop();
-    tracing::info!("Memory stats stopped");
-
-    tracing::info!("Infrastructure connections will be released when dropped");
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Startup banner (mirrors Go's displayServerInfos)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-fn display_startup_banner(cfg: &AppConfig, addr: &str, env: &str) {
-    tracing::info!("═══════════════════════════════════════════════════");
-    tracing::info!(
-        name    = %cfg.name,
-        env     = %env,
-        version = env!("CARGO_PKG_VERSION"),
-        "rust-ucs-fe"
-    );
-    tracing::info!("Server URL  : http://{}", addr);
-    tracing::info!("Bound on    : {} port {}", cfg.host, cfg.port);
-    tracing::info!("Body limit  : {} bytes", cfg.body_limit);
-    tracing::info!("Quick timeout: {}s", cfg.timeouts.quick);
-    tracing::info!("═══════════════════════════════════════════════════");
+    info!("shutdown signal received, draining in-flight requests...");
 }
