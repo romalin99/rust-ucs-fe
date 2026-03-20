@@ -2,24 +2,21 @@
 ///
 /// Full port of Go's `internal/middleware/logger.go` (`BehaviorLogger`).
 ///
-/// Logs every non-skipped business request via `pkg::logs::behavior_*` using
-/// the same wire format as the Go middleware:
-///
+/// Final log line (same wire format as Go):
 /// ```text
-/// [traceID/spanID] [API-REQUEST] [END] URI: /path, Method: POST, Status: 200, Addr: 1.2.3.4, Elapsed: 5ms
+/// [2026-03-17 10:00:00.000] [ucs-fe] [INFO ] [request_logger.rs:XX] - [traceID/spanID] [API-REQUEST] [END] URI: /path, Method: POST, Status: 200, Addr: 1.2.3.4, Elapsed: 5ms
 /// ```
 ///
 /// Level routing matches Go's `logRequest`:
-///   ≥ 500 → `BehaviorError`  ·  ≥ 400 → `BehaviorWarn`  ·  else → `BehaviorInfo`
+///   ≥ 500 → ERROR  ·  ≥ 400 → WARN  ·  else → INFO
 ///
 /// Skip list is identical to Go's:
 ///   `/test/`, `/metrics`, `/swagger`, `/favicon.ico`, `/health`,
 ///   `/livez`, `/readyz`, `/ping`, `/monitor`
 
-use axum::{body::Body, extract::Request, middleware::Next, response::Response};
-use std::{net::IpAddr, time::Instant};
-
-use crate::pkg::logs;
+use axum::{body::Body, extract::ConnectInfo, extract::Request, middleware::Next, response::Response};
+use std::net::{IpAddr, SocketAddr};
+use std::time::Instant;
 
 static SKIP_PATHS: &[&str] = &[
     "/test/",
@@ -34,11 +31,14 @@ static SKIP_PATHS: &[&str] = &[
 ];
 
 /// Axum middleware that logs each API request to the behavior log target.
+///
+/// `tracing` macros are called **directly** in this function (not through
+/// wrapper functions) so that the file/line metadata points here, matching
+/// Go's `zap.AddCallerSkip(1)` which shows the middleware as caller.
 pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     let path   = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Skip non-business paths (mirrors Go's skipList check).
     if SKIP_PATHS.iter().any(|p| path.contains(p)) {
         return next.run(req).await;
     }
@@ -51,17 +51,17 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     let elapsed  = start.elapsed().as_millis();
     let status   = response.status().as_u16();
 
-    // Format mirrors Go's `logRequest` exactly:
-    // "[traceID/spanID] [API-REQUEST] [END] URI: …, Method: …, Status: …, Addr: …, Elapsed: …ms"
     let msg = format!(
         "[{}/{}] [API-REQUEST] [END] URI: {}, Method: {}, Status: {}, Addr: {}, Elapsed: {}ms",
         trace_id, span_id, path, method, status, client_ip, elapsed,
     );
 
+    // Call tracing macros DIRECTLY so file:line points to this middleware,
+    // not to a wrapper function in logs.rs.
     match status {
-        500..=599 => logs::behavior_error(&msg),
-        400..=499 => logs::behavior_warn(&msg),
-        _         => logs::behavior_info(&msg),
+        500..=599 => tracing::error!(target: "behavior", "{}", msg),
+        400..=499 => tracing::warn!(target: "behavior", "{}", msg),
+        _         => tracing::info!(target: "behavior", "{}", msg),
     }
 
     response
@@ -71,17 +71,23 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
 
 /// Extract (traceID, spanID) from the request.
 ///
-/// Strategy (mirrors Go's `extractTraceIDs`):
-/// 1. `X-Trace-Id` / `X-Span-Id`
-/// 2. `traceparent` (W3C Trace Context — traceID is field 2, spanID is field 3)
-/// 3. `uber-trace-id` (Jaeger — traceID is field 1, spanID is field 2)
-/// 4. Falls back to `"unknown"`.
+/// Strategy (mirrors Go's `extractTraceIDs` priority):
+///   1. OpenTelemetry span context (Go: `trace.SpanFromContext(ctx)`)
+///      — Not available without `tracing-opentelemetry`; skip for now.
+///   2. `X-Trace-Id` / `X-Span-Id` explicit headers
+///   3. W3C `traceparent`: `"00-<traceID>-<spanID>-<flags>"`
+///   4. Jaeger `uber-trace-id`: `"<traceID>:<spanID>:<parentID>:<flags>"`
+///   5. Generate a UUID v4 as request-scoped traceID (ensures every log
+///      line is traceable even without upstream propagation).
+///
+/// Go falls back to `"unknown"` in step 5, but generating a UUID per
+/// request is strictly better for production debugging.
 fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     let headers = req.headers();
 
     // 1. Explicit X-Trace-Id / X-Span-Id headers
-    let x_trace = header_str(req, "X-Trace-Id");
-    let x_span  = header_str(req, "X-Span-Id");
+    let x_trace = headers.get("X-Trace-Id").and_then(|v| v.to_str().ok());
+    let x_span  = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
     if x_trace.is_some() || x_span.is_some() {
         return (
             x_trace.unwrap_or("unknown").to_string(),
@@ -105,26 +111,28 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
         }
     }
 
-    ("unknown".to_string(), "unknown".to_string())
-}
-
-/// Return a header value as `&str` or `None`.
-fn header_str<'a>(req: &'a Request<Body>, name: &str) -> Option<&'a str> {
-    req.headers().get(name).and_then(|v| v.to_str().ok())
+    // 4. Generate IDs conforming to W3C / OTel wire format so logs are
+    //    consistent whether upstream propagation is present or not.
+    //    trace_id = 32 hex chars, span_id = 16 hex chars.
+    let trace_id = uuid::Uuid::new_v4().simple().to_string();
+    let span_raw = uuid::Uuid::new_v4().as_u128();
+    let span_id  = format!("{:016x}", span_raw as u64);
+    (trace_id, span_id)
 }
 
 // ── Client IP extraction ──────────────────────────────────────────────────────
 
-/// Return the most reliable public client IP for this request.
+/// Return the most reliable client IP for this request.
 ///
 /// Strategy (mirrors Go's `getClientIP`):
-/// 1. Scan `X-Forwarded-For` right-to-left; return the first public IP
-///    (resists prepend-spoofing).
-/// 2. Fall back to `X-Real-IP` if it is a public IP.
-/// 3. Return `"-"` if nothing usable is found.
+///   1. `X-Forwarded-For` right-to-left → first public IP
+///   2. `X-Real-IP` → if public
+///   3. `ConnectInfo<SocketAddr>` → TCP peer address (Go's `c.IP()`)
+///   4. `"-"` fallback
 fn extract_client_ip(req: &Request<Body>) -> String {
     let headers = req.headers();
 
+    // 1. X-Forwarded-For — rightmost public IP
     if let Some(xff) = headers.get("X-Forwarded-For").and_then(|v| v.to_str().ok()) {
         for part in xff.split(',').rev() {
             let candidate = part.trim();
@@ -134,6 +142,7 @@ fn extract_client_ip(req: &Request<Body>) -> String {
         }
     }
 
+    // 2. X-Real-IP
     if let Some(xrip) = headers
         .get("X-Real-IP")
         .and_then(|v| v.to_str().ok())
@@ -144,12 +153,16 @@ fn extract_client_ip(req: &Request<Body>) -> String {
         }
     }
 
+    // 3. Direct TCP peer address (mirrors Go's `c.IP()`)
+    //    Available because main.rs uses `into_make_service_with_connect_info`.
+    if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
+        return addr.ip().to_string();
+    }
+
     "-".to_string()
 }
 
 /// Returns `true` when `ip` is a valid, non-loopback, non-private address.
-///
-/// Mirrors Go's `isPublicIP(ip string) bool`.
 fn is_public_ip(ip: &str) -> bool {
     match ip.parse::<IpAddr>() {
         Ok(addr) => !addr.is_loopback() && !is_private(&addr),
@@ -163,7 +176,6 @@ fn is_private(addr: &IpAddr) -> bool {
         IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
         IpAddr::V6(v6) => {
             let seg = v6.segments();
-            // fc00::/7 unique-local  or  fe80::/10 link-local
             (seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80
         }
     }

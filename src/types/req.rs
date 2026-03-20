@@ -22,8 +22,13 @@ pub struct SubmitVerifyRequest {
     pub data: Vec<VerifyDataItem>,
 }
 
+/// Query parameters for GET /verification/questions.
+///
+/// `customerName` defaults to `""` so that the handler can return its own
+/// typed error instead of Axum emitting a generic 400 rejection.
+/// Mirrors Go's `ctx.Query("customerName")` which returns `""` when absent.
 #[derive(Debug, Deserialize)]
 pub struct GetQuestionListParams {
-    #[serde(rename = "customerName")]
+    #[serde(rename = "customerName", default)]
     pub customer_name: String,
 }
