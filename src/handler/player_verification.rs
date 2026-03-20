@@ -12,7 +12,7 @@
 ///   - PhoneAlreadyBound / EmailAlreadyBound → 200 (business-normal, not errors)
 ///   - errorCode prefix: `ucsfe.questions.*` / `ucsfe.materials.*`
 use axum::{
-    extract::{Query, State},
+    extract::{Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
@@ -195,10 +195,22 @@ pub async fn get_question_list(
 pub async fn submit_verify_materials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<SubmitVerifyRequest>,
+    body_result: Result<Json<SubmitVerifyRequest>, JsonRejection>,
 ) -> Response {
     let merchant_code = extract_header(&headers, "Merchant");
     let customer_ip = extract_header(&headers, "CustomerIP");
+
+    let body = match body_result {
+        Ok(Json(b)) => b,
+        Err(e) => {
+            tracing::warn!("bind json failed: {}", e);
+            return err_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ucsfe.materials.param_invalid",
+                "invalid request body",
+            );
+        }
+    };
 
     tracing::info!(
         "Received merchant={}, customerIP={}, body={:?}",

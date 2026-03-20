@@ -188,16 +188,26 @@ impl<'de> Deserialize<'de> for NullString {
 }
 
 /// Mirrors Go's `NullInt32`.
-#[derive(Debug, Clone, Default, Serialize)]
+///
+/// Go's `NullInt32.UnmarshalJSON(null)` sets `Val = -1, Valid = false`.
+/// `#[serde(default)]` (absent key) uses `Default` → `{val: 0, valid: false}` (Go zero-value).
+/// Explicit JSON `null` goes through `Deserialize` → `{val: -1, valid: false}`.
+#[derive(Debug, Clone, Serialize)]
 pub struct NullInt32 {
     pub val:   i32,
     pub valid: bool,
 }
 
+impl Default for NullInt32 {
+    fn default() -> Self {
+        Self { val: 0, valid: false }
+    }
+}
+
 impl<'de> Deserialize<'de> for NullInt32 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         match Option::<i32>::deserialize(d)? {
-            None => Ok(NullInt32::default()),
+            None => Ok(NullInt32 { val: -1, valid: false }),
             Some(v) => Ok(NullInt32 { val: v, valid: true }),
         }
     }
@@ -309,7 +319,11 @@ pub struct Merchant {
 }
 
 /// Mirrors Go's `CustomerAdditionalInfo` — aligned to actual USS JSON response.
-#[derive(Debug, Clone, Default, Deserialize)]
+///
+/// Go has a custom `UnmarshalJSON` that pre-sets `UsState = NullInt32{Val: -1, Valid: false}`
+/// before unmarshalling, so even when the entire object is `null` or when `usState` is `null`,
+/// `UsState.Val` is `-1` (not `0`). The custom `Default` here mirrors that behaviour.
+#[derive(Debug, Clone, Deserialize)]
 pub struct CustomerAdditionalInfo {
     // ── Timestamps ────────────────────────────────────────────────────────────
     #[serde(rename = "createTime", default)] pub create_time: FlexTime,
@@ -339,6 +353,32 @@ pub struct CustomerAdditionalInfo {
     /// the key is *absent*, not when the key is present with an explicit `null`.
     #[serde(rename = "emailVerification", deserialize_with = "bool_from_null_or_bool", default)]
     pub email_verification: bool,
+}
+
+impl Default for CustomerAdditionalInfo {
+    fn default() -> Self {
+        Self {
+            create_time:              FlexTime::default(),
+            update_time:              FlexTime::default(),
+            permanent_address:        NullString::default(),
+            place_of_birth:           NullString::default(),
+            nationality:              NullString::default(),
+            region:                   NullString::default(),
+            kakao:                    NullString::default(),
+            google:                   NullString::default(),
+            google_id:                NullString::default(),
+            telegram_id:              NullString::default(),
+            glife_id:                 NullString::default(),
+            maya_id:                  NullString::default(),
+            apple_uid:                NullString::default(),
+            facebook_uid:             NullString::default(),
+            official_app_login_status: NullString::default(),
+            customer_id:              NullInt::default(),
+            us_state:                 NullInt32 { val: -1, valid: false },
+            version:                  0,
+            email_verification:       false,
+        }
+    }
 }
 
 /// Mirrors Go's `Value` (inner payload of `CustomerInfo`) — aligned to actual USS JSON response.

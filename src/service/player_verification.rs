@@ -195,14 +195,22 @@ impl PlayerVerificationService {
             "[USS] customer info"
         );
 
+        let wps_email = wps_resp.value.is_email_reset_enabled;
+        let wps_sms = wps_resp.value.is_sms_reset_enabled;
+
+        tracing::info!(
+            wps_email, wps_sms, email_verification, verification_mode = %verification_mode,
+            "WPS-USS flags"
+        );
+
         // 5. Business rules: email/phone already bound
-        if wps_resp.value.is_email_reset_enabled && email_verification {
-            tracing::info!("[WPS-USS] email enabled");
+        if wps_email && email_verification {
+            tracing::info!(wps_email, email_verification, "[WPS-USS] email enabled");
             return Err(AppError::EmailAlreadyBound);
         }
 
-        if wps_resp.value.is_sms_reset_enabled && verification_mode == "0" {
-            tracing::info!("[WPS-USS] phone enabled");
+        if wps_sms && verification_mode == "0" {
+            tracing::info!(wps_sms, verification_mode = %verification_mode, "[WPS-USS] phone enabled");
             return Err(AppError::PhoneAlreadyBound);
         }
 
@@ -257,6 +265,10 @@ impl PlayerVerificationService {
         }
 
         let one_time_passwd = token_resp.value.clone();
+        tracing::info!(
+            customer_name = %customer_name,
+            "one-time password generated, result={:?}", token_resp
+        );
 
         // 3. Load merchant rule config
         let rule_cfg = self
@@ -274,9 +286,11 @@ impl PlayerVerificationService {
             .map(|q| (q.field_id.clone(), q.clone()))
             .collect();
 
-        // 5. Score profile fields
+        // 5. Score profile fields (tracking submitted IDs for step 7)
+        let mut submitted_field_ids: HashMap<String, ()> = HashMap::new();
         let mut qa_map: QaMap = HashMap::new();
         accurate_judgment_score(
+            &mut submitted_field_ids,
             &req_body.data,
             &customer,
             &rule_cfg,
@@ -326,14 +340,15 @@ impl PlayerVerificationService {
         tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[MCSClient] VerifyPlayerInfo");
 
         // 7. Score financial history from MCS response
-        calculate_score_for_financial_history(&mcs_resp, &rule_cfg, &mut qa_map, &questions_map);
+        tracing::info!("[MCSClient] response={}", mcs_resp);
+        calculate_score_for_financial_history(&submitted_field_ids, &mcs_resp, &rule_cfg, &mut qa_map, &questions_map);
 
         // 8. Serialise QA map and compute total score
         let qas_bytes = serde_json::to_string(&qa_map)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("marshal qas: {}", e)))?;
 
         let actual_score: i32 = qa_map.values().map(|qa| qa.score).sum();
-        let score_checked = actual_score > rule_cfg.passing_score;
+        let score_checked = actual_score >= rule_cfg.passing_score;
 
         tracing::info!(
             customer_id = customer.value.customer_id.val,
@@ -359,8 +374,13 @@ impl PlayerVerificationService {
         };
 
         if let Err(e) = self.validation_repo.insert(record).await {
-            tracing::warn!(error = %e, "Insert validation record failed (non-fatal)");
+            tracing::warn!(error = %e, "insert validation record failed");
         }
+        tracing::info!(
+            customer_id = customer.value.customer_id.val,
+            merchant_code,
+            "insert success"
+        );
 
         let mut data = SubmitVerifyData {
             score_checked,
@@ -511,15 +531,16 @@ impl PlayerVerificationService {
 
 /// Score 32 profile fields submitted by the player against USS customer data.
 ///
-/// Rules (bind=true):
-///   1. FieldValue == ""              → score 0
-///   2. FieldValue matches expected   → score = questionValue.score
-///   3. FieldValue != expected        → score 0
-///
-/// Rules (bind=false, check actual value only):
-///   1. expectedValue == ""           → score = emptyScore
-///   2. expectedValue != ""           → score 0
+/// Mirrors Go's `accurateJudgmentScore` line-by-line:
+///   bind=true:
+///     1. submitted == ""                       → score 0, correct false
+///     2. submitted == expected (case-insensitive) → score full, correct true
+///     3. submitted != expected                 → score 0, correct false
+///   bind=false (ignore submitted, check actual):
+///     1. expected == "" || expected == "-1"     → score emptyScore, correct true
+///     2. otherwise                              → score 0, correct false
 fn accurate_judgment_score(
+    submitted_field_ids: &mut HashMap<String, ()>,
     data_items: &[VerifyDataItem],
     customer: &crate::client::uss::CustomerInfo,
     rule_cfg: &MerchantRuleConfig,
@@ -569,47 +590,61 @@ fn accurate_judgment_score(
 
     for data_item in data_items {
         let field_id = &data_item.item.field_id;
+        submitted_field_ids.insert(field_id.clone(), ());
 
         if is_financial_history(field_id) {
             continue;
         }
 
-        let expected_value = match field_lookup.get(field_id.as_str()) {
-            Some(v) => v.as_str(),
-            None => {
-                tracing::warn!(field_id, "unknown fieldId in accurateJudgmentScore");
-                continue;
-            }
-        };
+        // Go: `expectedValue, ok1 := fieldLookup[fieldId]`
+        // Go: `questionValue, ok2 := fieldIdMapCfg[fieldId]`
+        // Go: `if !ok1 && !ok2 { continue }`
+        let ok1 = field_lookup.contains_key(field_id.as_str());
+        let ok2 = field_id_map_cfg.contains_key(field_id.as_str());
 
+        if !ok1 && !ok2 {
+            tracing::warn!(field_id = %field_id, "unknown fieldId");
+            continue;
+        }
+
+        let expected_value = field_lookup.get(field_id.as_str()).map(|v| v.as_str()).unwrap_or("");
         let question_cfg = match field_id_map_cfg.get(field_id) {
             Some(q) => q,
-            None => {
-                tracing::warn!(field_id, "fieldId not in question config");
-                continue;
-            }
+            None => continue,
         };
 
         let submitted = &data_item.item.field_value;
-        let (score, is_correct) = if data_item.bind {
-            // bind=true
+
+        let (score, is_correct);
+        if data_item.bind {
             if submitted.is_empty() {
-                (0, false)
+                score = 0;
+                is_correct = false;
+                tracing::warn!(field_id = %field_id, "bind=true empty value");
             } else if submitted.eq_ignore_ascii_case(expected_value) {
-                (question_cfg.score, true)
+                score = question_cfg.score;
+                is_correct = true;
             } else {
-                tracing::warn!(field_id, submitted = %submitted, expected = %expected_value, "bind=true mismatch");
-                (0, false)
+                score = 0;
+                is_correct = false;
             }
+            tracing::warn!(
+                field_id = %field_id, submitted = %submitted, expected = %expected_value,
+                "bind=true mismatch"
+            );
         } else {
-            // bind=false: ignore submitted value, check actual
-            if expected_value.is_empty() {
-                (empty_score, false)
+            if expected_value.is_empty() || expected_value == "-1" {
+                score = empty_score;
+                is_correct = true;
             } else {
-                tracing::warn!(field_id, expected = %expected_value, "bind=false non-empty expected");
-                (0, false)
+                score = 0;
+                is_correct = false;
             }
-        };
+            tracing::warn!(
+                field_id = %field_id, expected = %expected_value,
+                "bind=false expected"
+            );
+        }
 
         qa_map.insert(
             field_id.clone(),
@@ -625,7 +660,11 @@ fn accurate_judgment_score(
 }
 
 /// Map MCS rawScore (3=matched, 2=empty-match, else=not-matched) → score/isCorrect.
+///
+/// Mirrors Go's `calculateScoreForFinancialHistory`: only scores fields that were
+/// actually submitted (present in `submitted_field_ids`).
 fn calculate_score_for_financial_history(
+    submitted_field_ids: &HashMap<String, ()>,
     resp: &crate::client::mcs::VerifyFinanceHistoryResp,
     rule_cfg: &MerchantRuleConfig,
     qa_map: &mut QaMap,
@@ -689,15 +728,22 @@ fn calculate_score_for_financial_history(
             Some(q) => q,
             None => continue,
         };
+        if !submitted_field_ids.contains_key(*field_id) {
+            continue;
+        }
 
+        // Go: 3=matched(true), 2=empty-match(true), else=not-matched(false)
         let (score, is_correct, msg) = match *raw_score {
             3 => (q.score, true, "Matched"),
-            2 => (empty_score, false, "Empty Match"),
+            2 => (empty_score, true, "Empty Match"),
             _ => (0, false, "Not Matched"),
         };
 
         if !is_correct {
-            tracing::warn!(field_id, raw_score, msg, "[MCSClient] score result");
+            tracing::warn!(
+                raw_score, msg, field_id = %field_id,
+                "[MCSClient] score result"
+            );
         }
 
         qa_map.insert(
