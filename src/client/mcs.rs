@@ -6,7 +6,7 @@
 ///               [`VerifyFinanceHistoryResult`], [`VerifyPlayerHistoryResult`],
 ///               [`VerifyPlayerFinanceInfoResult`]
 ///   client.go → [`McsClient`]  (retry · per-attempt timeout · 100 KB / 512 B snippet body)
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -406,6 +406,7 @@ impl McsClient {
         headers: &PlayerHeaders,
         req: &VerifyFinanceHistoryReq,
     ) -> Result<VerifyFinanceHistoryResp> {
+        let start = Instant::now();
         const OP: &str = "verifyPlayerInfo";
 
         let url = format!(
@@ -420,17 +421,28 @@ impl McsClient {
             url = %url,
             headers = %headers,
             req_body = %String::from_utf8_lossy(&req_body),
-            "[MCSClient] {OP} request"
+            "[MCSClient] VerifyPlayerInfo request"
         );
 
         let resp_body = self
             .player_post(&url, headers, &req_body)
             .await
+            .map_err(|e| {
+                tracing::warn!(
+                    merchant = %headers.merchant,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    error = %e,
+                    "[MCSClient] VerifyPlayerInfo failed"
+                );
+                e
+            })
             .with_context(|| format!("{OP}: request failed"))?;
 
         tracing::info!(
+            merchant = %headers.merchant,
+            elapsed_ms = start.elapsed().as_millis(),
             raw_resp = %String::from_utf8_lossy(&resp_body),
-            "[MCSClient] {OP} raw response"
+            "[MCSClient] VerifyPlayerInfo success"
         );
 
         serde_json::from_slice::<VerifyFinanceHistoryResp>(&resp_body).with_context(|| {

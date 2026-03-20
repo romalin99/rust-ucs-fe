@@ -15,22 +15,44 @@
 ///   }
 /// }
 /// ```
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::config::ServiceConfig;
 
 // ── Retry constants (mirrors Go's doWithRetry) ────────────────────────────────
 
-/// Number of attempts (1 initial + 2 retries = 3 total), matching Go.
 const MAX_ATTEMPTS:    u32      = 3;
-/// Delay between attempts (mirrors Go's 700 ms sleep).
 const RETRY_DELAY:     Duration = Duration::from_millis(700);
-/// Per-request timeout (mirrors Go's 5 s context deadline per attempt).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_RESPONSE_SIZE: usize  = 1024 * 100; // 100 KB
+
+// ── Error type (mirrors Go's wps/error.go) ────────────────────────────────────
+
+/// Non-200 HTTP response returned by the WPS service.
+/// Mirrors Go's `wps.HTTPError`.
+#[derive(Debug, Clone)]
+pub struct WpsHttpError {
+    pub body:   String,
+    pub status: u16,
+}
+
+impl std::fmt::Display for WpsHttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unexpected status code: {}", self.status)
+    }
+}
+
+impl std::error::Error for WpsHttpError {}
+
+/// Mirrors Go's `wps.IsHTTPError`.
+pub fn is_http_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<WpsHttpError>().is_some()
+}
 
 // ── Response models ───────────────────────────────────────────────────────────
 
@@ -100,64 +122,80 @@ impl WpsClient {
 
     /// `GET {base_url}/members/reset-password-status`
     ///
-    /// Sends the `Merchant` header and deserialises the response into
-    /// [`ResetPasswordStatusResponse`].
-    ///
-    /// # Equivalent curl
-    /// ```bash
-    /// curl -X GET \
-    ///   'http://10.80.0.58:9007/wps-core/members/reset-password-status' \
-    ///   -H 'accept: application/json' \
-    ///   -H 'Merchant: dfstar'
-    /// ```
-    /// `GET {base_url}/members/reset-password-status`
-    ///
-    /// Retries up to 3 times with 700 ms delay between attempts and a 5 s
-    /// per-attempt timeout — identical to Go's `doWithRetry`.
+    /// Mirrors Go's `Client.GetResetPasswordStatus`.
+    /// Retries up to 3 times with 700 ms delay and 5 s per-attempt timeout.
     pub async fn get_reset_password_status(
         &self,
         merchant_code: &str,
     ) -> Result<ResetPasswordStatusResponse> {
+        let start = Instant::now();
         let url = format!("{}/members/reset-password-status", self.base_url);
 
-        tracing::debug!(url = %url, merchant = merchant_code, "WPS → get_reset_password_status");
+        tracing::info!(url = %url, merchant = merchant_code, "[WPSClient] GetResetPasswordStatus");
 
-        self.do_with_retry(merchant_code, &url).await
+        let body = self
+            .do_get_with_retry(&url, merchant_code)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    merchant = merchant_code,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    error = %e,
+                    "[WPSClient] GetResetPasswordStatus failed"
+                );
+                e
+            })?;
+
+        let result: ResetPasswordStatusResponse = serde_json::from_slice(&body)
+            .with_context(|| {
+                format!(
+                    "deserialization failed, raw response: {}",
+                    String::from_utf8_lossy(&body)
+                )
+            })?;
+
+        tracing::info!(
+            merchant = merchant_code,
+            is_email_reset_enabled = result.value.is_email_reset_enabled,
+            is_sms_reset_enabled   = result.value.is_sms_reset_enabled,
+            elapsed_ms = start.elapsed().as_millis(),
+            "[WPSClient] GetResetPasswordStatus success"
+        );
+
+        Ok(result)
     }
 
-    // ── Retry helper ──────────────────────────────────────────────────────────
+    // ── Private helpers (mirrors Go's doGet / doGetWithRetry / doWithRetry) ──
 
-    /// Execute the WPS GET with up to MAX_ATTEMPTS attempts.
-    ///
-    /// Mirrors Go's `doWithRetry`:
-    ///   - 3 total attempts
-    ///   - 700 ms sleep between each attempt
-    ///   - 5 s per-attempt timeout
-    async fn do_with_retry(
-        &self,
-        merchant_code: &str,
-        url: &str,
-    ) -> Result<ResetPasswordStatusResponse> {
+    async fn do_get_with_retry(&self, url: &str, merchant_code: &str) -> Result<bytes::Bytes> {
+        self.do_with_retry(|| self.do_get(url, merchant_code)).await
+    }
+
+    async fn do_with_retry<F, Fut>(&self, f: F) -> Result<bytes::Bytes>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<bytes::Bytes>>,
+    {
         let mut last_err = anyhow::anyhow!("no attempts made");
 
         for attempt in 1..=MAX_ATTEMPTS {
-            match tokio::time::timeout(REQUEST_TIMEOUT, self.do_get(merchant_code, url)).await {
-                Ok(Ok(resp)) => return Ok(resp),
+            match tokio::time::timeout(REQUEST_TIMEOUT, f()).await {
+                Ok(Ok(body)) => return Ok(body),
                 Ok(Err(e)) => {
                     tracing::warn!(
                         attempt,
+                        max = MAX_ATTEMPTS,
                         error = %e,
-                        merchant = merchant_code,
-                        "WPS get_reset_password_status failed, will retry"
+                        "[WPSClient] attempt {}/{} failed, retrying...",
+                        attempt, MAX_ATTEMPTS
                     );
                     last_err = e;
                 }
-                Err(_elapsed) => {
+                Err(_timeout) => {
                     tracing::warn!(
                         attempt,
-                        merchant = merchant_code,
-                        "WPS get_reset_password_status timed out after {:?}",
-                        REQUEST_TIMEOUT
+                        "[WPSClient] attempt {}/{} timed out after {:?}",
+                        attempt, MAX_ATTEMPTS, REQUEST_TIMEOUT
                     );
                     last_err = anyhow::anyhow!("WPS request timed out after {:?}", REQUEST_TIMEOUT);
                 }
@@ -168,47 +206,45 @@ impl WpsClient {
             }
         }
 
-        Err(last_err.context(format!(
-            "WPS get_reset_password_status failed after {} attempts",
-            MAX_ATTEMPTS
-        )))
+        Err(last_err.context(format!("all {MAX_ATTEMPTS} WPS attempts failed")))
     }
 
-    async fn do_get(
-        &self,
-        merchant_code: &str,
-        url: &str,
-    ) -> Result<ResetPasswordStatusResponse> {
-        let response = self
+    async fn do_get(&self, url: &str, merchant_code: &str) -> Result<bytes::Bytes> {
+        let resp = self
             .inner
             .get(url)
-            .header("accept", "application/json")
+            .header("Accept", "application/json")
             .header("Merchant", merchant_code)
             .send()
             .await
             .with_context(|| format!("WPS GET request failed: {url}"))?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("WPS returned HTTP {}: {}", status, body);
+        read_body(resp).await
+    }
+}
+
+/// Accept only status 200; read up to `MAX_RESPONSE_SIZE` bytes.
+/// Non-200 → `WpsHttpError`. Mirrors Go's `readBody`.
+async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
+    let status = resp.status();
+
+    if status.as_u16() != 200 {
+        let _discard = resp.bytes().await;
+        return Err(WpsHttpError {
+            body: format!("unexpected status code: {}", status.as_u16()),
+            status: status.as_u16(),
         }
+        .into());
+    }
 
-        let parsed = response
-            .json::<ResetPasswordStatusResponse>()
-            .await
-            .with_context(|| {
-                format!("Failed to deserialise WPS ResetPasswordStatusResponse from {url}")
-            })?;
+    let full = resp
+        .bytes()
+        .await
+        .context("failed to read WPS response body")?;
 
-        tracing::debug!(
-            merchant = merchant_code,
-            email_enabled    = parsed.value.is_email_reset_enabled,
-            sms_enabled      = parsed.value.is_sms_reset_enabled,
-            personal_enabled = parsed.value.is_personal_info_reset_enabled,
-            "WPS reset-password-status"
-        );
-
-        Ok(parsed)
+    if full.len() > MAX_RESPONSE_SIZE {
+        Ok(full.slice(..MAX_RESPONSE_SIZE))
+    } else {
+        Ok(full)
     }
 }

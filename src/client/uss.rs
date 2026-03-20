@@ -6,7 +6,7 @@
 ///               [`Profile`], [`CustomerAdditionalInfo`], [`Value`], [`CustomerInfo`],
 ///               [`PasswordResetTokenRequest`], [`PasswordResetTokenResponse`]
 ///   client.go → [`UssClient`]  (retry · per-attempt timeout · 100 KB body cap)
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -517,20 +517,14 @@ impl UssClient {
 
     /// Retrieve customer information by customer name.
     ///
-    /// **URL**: `GET {host}/{basePath}customer?customerName={name}&force={force}`
-    ///
-    /// `@` in `customerName` (e.g. `merchant@player`) is sent **raw** (not
-    /// percent-encoded), matching Go's `fmt.Sprintf` URL construction exactly.
-    ///
     /// Mirrors Go's `Client.GetCustomer`.
     pub async fn get_customer(
         &self,
         customer_name: &str,
         force: bool,
     ) -> Result<CustomerInfo> {
-        // Build the URL exactly like Go: fmt.Sprintf("%s/%scustomer?customerName=%s&force=%t", ...)
-        // Using raw string concatenation preserves the literal `@` character.
-        let encoded_url = format!(
+        let start = Instant::now();
+        let url = format!(
             "{}/{}customer?customerName={}&force={}",
             self.base_url,
             self.base_path,
@@ -538,25 +532,39 @@ impl UssClient {
             force
         );
 
-        tracing::info!(url = %encoded_url, "[USSClient] GetCustomer request");
+        tracing::info!(url = %url, "[USSClient] GetCustomer request");
 
         let body = self
-            .do_with_retry(|| self.do_get(&encoded_url))
+            .do_with_retry(|| self.do_get(&url))
             .await
+            .map_err(|e| {
+                tracing::warn!(
+                    customer_name,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    error = %e,
+                    "[USSClient] GetCustomer failed"
+                );
+                e
+            })
             .with_context(|| format!("GetCustomer request failed for '{customer_name}'"))?;
 
-        serde_json::from_slice::<CustomerInfo>(&body)
+        let result = serde_json::from_slice::<CustomerInfo>(&body)
             .with_context(|| {
                 format!(
-                    "USS GetCustomer deserialisation failed, raw={:?}",
+                    "deserialization failed, raw response: {}",
                     String::from_utf8_lossy(&body)
                 )
-            })
+            })?;
+
+        tracing::info!(
+            customer_name,
+            elapsed_ms = start.elapsed().as_millis(),
+            "[USSClient] GetCustomer success"
+        );
+        Ok(result)
     }
 
     /// Request a one-time password reset token for the given customer.
-    ///
-    /// **URL**: `PUT {host}/{basePath}password/reset-generate`
     ///
     /// Mirrors Go's `Client.GeneratePasswordResetToken`.
     pub async fn generate_password_reset_token(
@@ -564,6 +572,7 @@ impl UssClient {
         customer_name: &str,
         merchant_code: &str,
     ) -> Result<PasswordResetTokenResponse> {
+        let start = Instant::now();
         let url = format!(
             "{}/{}password/reset-generate",
             self.base_url, self.base_path
@@ -584,17 +593,35 @@ impl UssClient {
         let body = self
             .do_with_retry(|| self.do_put(&url, &payload))
             .await
+            .map_err(|e| {
+                tracing::warn!(
+                    customer_name,
+                    merchant_code,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    error = %e,
+                    "[USSClient] GeneratePasswordResetToken failed"
+                );
+                e
+            })
             .with_context(|| {
                 format!("GeneratePasswordResetToken request failed for '{customer_name}'")
             })?;
 
-        serde_json::from_slice::<PasswordResetTokenResponse>(&body)
+        let result = serde_json::from_slice::<PasswordResetTokenResponse>(&body)
             .with_context(|| {
                 format!(
-                    "USS GeneratePasswordResetToken deserialisation failed, raw={:?}",
+                    "deserialization failed, raw response: {}",
                     String::from_utf8_lossy(&body)
                 )
-            })
+            })?;
+
+        tracing::info!(
+            customer_name,
+            merchant_code,
+            elapsed_ms = start.elapsed().as_millis(),
+            "[USSClient] GeneratePasswordResetToken success"
+        );
+        Ok(result)
     }
 }
 
