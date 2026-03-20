@@ -4,6 +4,7 @@
 /// Contains rate limiting (Redis), WPS/USS/MCS orchestration, and scoring.
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use redis::AsyncCommands;
@@ -135,17 +136,10 @@ impl PlayerVerificationService {
             lock_hour: rule.lock_hour,
             ip_retry_limit: rule.ip_retry_limit,
             account_retry_limit: rule.account_retry_limit,
-            // QUESTIONS CLOB is a JSON *object* keyed by fieldId — NOT an array.
-            // {"MOBILE_NUMBER":{"fieldId":"MOBILE_NUMBER","valid":true,...},...}
             questions: rule
                 .questions_json
                 .as_deref()
-                .and_then(|j| {
-                    serde_json::from_str::<std::collections::HashMap<String, Question>>(j)
-                        .map_err(|e| tracing::warn!(error = %e, "failed to parse questions_json"))
-                        .ok()
-                        .map(|m| m.into_values().collect::<Vec<_>>())
-                })
+                .and_then(|j| serde_json::from_str(j).ok())
                 .unwrap_or_default(),
         };
 
@@ -160,11 +154,13 @@ impl PlayerVerificationService {
         .await?;
 
         // 3. WPS: get reset-password-status
+        let t = Instant::now();
         let wps_resp = self
             .wps
             .get_reset_password_status(merchant_code)
             .await
             .map_err(|e| AppError::WpsApiFailed(e.to_string()))?;
+        tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[WPSClient] GetResetPasswordStatus");
 
         if !wps_resp.success {
             tracing::warn!(
@@ -182,11 +178,13 @@ impl PlayerVerificationService {
 
         // 4. USS: get customer
         let full_customer_name = format!("{}@{}", merchant_code, customer_name);
+        let t = Instant::now();
         let customer = self
             .uss
             .get_customer(&full_customer_name, false)
             .await
             .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
+        tracing::info!(merchant_code, customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomer");
 
         let verification_mode = &customer.value.profile.verification_mode.val;
         let email_verification = customer.value.customer_additional_info.email_verification;
@@ -208,11 +206,8 @@ impl PlayerVerificationService {
             return Err(AppError::PhoneAlreadyBound);
         }
 
-        // 6. Build question list (with dropdown items from field cache).
-        // Awaiting mirrors Go's GetFieldConfig → initWg.Wait() blocking.
-        let questions = self
-            .get_valid_question_infos(&rule_cfg, merchant_code)
-            .await;
+        // 6. Build question list (with dropdown items from field cache)
+        let questions = self.get_valid_question_infos(&rule_cfg, merchant_code).await;
 
         Ok(MerchantRuleResponse {
             merchant_code: merchant_code.to_string(),
@@ -231,11 +226,13 @@ impl PlayerVerificationService {
         let customer_name = format!("{}@{}", merchant_code, req_body.customer_name);
 
         // 1. Fetch customer from USS
+        let t = Instant::now();
         let customer = self
             .uss
             .get_customer(&customer_name, false)
             .await
             .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
+        tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomer");
 
         tracing::info!(
             customer_id = customer.value.customer_id.val,
@@ -244,11 +241,13 @@ impl PlayerVerificationService {
         );
 
         // 2. Generate one-time password reset token (upfront, before scoring)
+        let t = Instant::now();
         let token_resp = self
             .uss
             .generate_password_reset_token(&req_body.customer_name, merchant_code)
             .await
             .map_err(|e| AppError::PasswordResetFailed(e.to_string()))?;
+        tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GeneratePasswordResetToken");
 
         if !token_resp.success {
             tracing::warn!(customer_name = %customer_name, "USS GeneratePasswordResetToken returned failure");
@@ -318,13 +317,13 @@ impl PlayerVerificationService {
             customer_ip: customer_ip.to_string(),
         };
 
+        let t = Instant::now();
         let mcs_resp = self
             .mcs
             .verify_player_info(&mcs_headers, &mcs_req)
             .await
             .map_err(|e| AppError::VerifyPlayerInfoFailed(e.to_string()))?;
-
-        tracing::info!("[MCSClient] VerifyPlayerInfo response received");
+        tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[MCSClient] VerifyPlayerInfo");
 
         // 7. Score financial history from MCS response
         calculate_score_for_financial_history(&mcs_resp, &rule_cfg, &mut qa_map, &questions_map);
@@ -476,27 +475,12 @@ impl PlayerVerificationService {
 
     // ── Question list builder ─────────────────────────────────────────────────
 
-    /// Build the public question list for a merchant.
-    ///
-    /// Mirrors Go's `getValidQuestionInfos`:
-    ///   - filters out invalid / empty-fieldId questions
-    ///   - for DD (dropdown) fields, waits for the field-config cache to be
-    ///     populated (mirrors Go's `initWg.Wait()` inside `GetFieldConfig`)
-    ///     then attaches the dropdown items
     async fn get_valid_question_infos(
         &self,
         rule_cfg: &MerchantRuleConfig,
         merchant_code: &str,
     ) -> Vec<QuestionInfo> {
-        // `get_field_config` waits for the initial DB load — mirrors Go's initWg.Wait().
         let dd_map = get_field_config(merchant_code).await;
-
-        tracing::debug!(
-            merchant_code,
-            questions = rule_cfg.questions.len(),
-            has_dd_map = dd_map.is_some(),
-            "get_valid_question_infos"
-        );
 
         rule_cfg
             .questions
@@ -504,18 +488,10 @@ impl PlayerVerificationService {
             .filter(|q| q.valid && !q.field_id.is_empty())
             .map(|q| {
                 let dropdown = if q.field_attribute == "DD" {
-                    let items = dd_map
+                    dd_map
                         .as_ref()
                         .and_then(|m| m.get(q.field_id.as_str()))
-                        .cloned();
-                    if items.is_none() {
-                        tracing::warn!(
-                            merchant_code,
-                            field_id = %q.field_id,
-                            "DD field has no dropdown items in cache"
-                        );
-                    }
-                    items
+                        .cloned()
                 } else {
                     None
                 };
