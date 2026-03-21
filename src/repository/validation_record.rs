@@ -664,4 +664,60 @@ impl ValidationRecordRepository {
             .map_err(|_| anyhow!("stream_by_time_range timed out after {:?}", timeout))?
             .context("spawn_blocking panicked in stream_by_time_range")?
     }
+    /// Dynamic multi-row SELECT with optional ordering and pagination.
+    ///
+    /// Mirrors Go's `FindListByEx(ctx, ex, optionalParams...)`.
+    ///
+    /// `where_clause` — raw SQL WHERE fragment (e.g. `"CUSTOMER_ID = :1 AND MERCHANT_CODE = :2"`).
+    /// `params`       — positional bind values.
+    /// `order_by`     — optional ORDER BY clause (e.g. `"CREATED_AT DESC"`).
+    /// `pagination`   — optional `(page, page_size)` for Oracle OFFSET/FETCH.
+    pub async fn find_list_by_expression(
+        &self,
+        where_clause: &str,
+        params: Vec<Box<dyn oracle::sql_type::ToSql + Send>>,
+        order_by: Option<&str>,
+        pagination: Option<(u32, u32)>,
+    ) -> Result<Vec<ValidationRecord>> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+        let wc      = where_clause.to_string();
+        let ob      = order_by.map(|s| s.to_string());
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+
+            let mut sql = format!(
+                "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE,                         IP, PASSING_SCORE, SCORE, QAS                  FROM TCG_UCS.VALIDATION_RECORD WHERE {}", wc
+            );
+            if let Some(ref order) = ob {
+                sql.push_str(&format!(" ORDER BY {}", order));
+            }
+            if let Some((page, page_size)) = pagination {
+                let offset = (page.saturating_sub(1)) * page_size;
+                sql.push_str(&format!(
+                    " OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
+                    offset, page_size
+                ));
+            }
+
+            let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
+                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+            let rows = conn.query(&sql, param_refs.as_slice())
+                .context("FindListByExpression query")?;
+
+            let mut result = Vec::new();
+            for row_result in rows {
+                let record = Self::map_row(row_result.context("FindListByExpression row read")?)?;
+                result.push(record);
+            }
+            Ok(result)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_list_by_expression timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
 }

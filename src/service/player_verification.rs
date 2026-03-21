@@ -13,7 +13,7 @@ use crate::client::mcs::{McsClient, PlayerHeaders, VerifyFinanceHistoryReq};
 use crate::client::uss::UssClient;
 use crate::client::wps::WpsClient;
 use crate::error::AppError;
-use crate::model::merchant_rule::{MerchantRuleConfig, Question, QuestionInfo};
+use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig, Question, QuestionInfo};
 use crate::model::validation_record::{QA, QaMap, ValidationRecord};
 use crate::repository::{MerchantRuleRepository, ValidationRecordRepository};
 use crate::service::field_cache::get_field_config;
@@ -119,37 +119,21 @@ impl PlayerVerificationService {
         customer_ip: &str,
         customer_name: &str,
     ) -> Result<MerchantRuleResponse, AppError> {
-        // 1. Fetch merchant rule
-        let rule = self
+        // 1. Fetch merchant rule (raw — matches Go's FindByMerchantCode)
+        let merchant_rule = self
             .merchant_repo
             .find_by_merchant_code(merchant_code)
             .await
             .map_err(|e| AppError::Internal(e))?
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
-        let rule_cfg = MerchantRuleConfig {
-            id: rule.id,
-            merchant_code: rule.merchant_code.clone(),
-            binding_type: rule.binding_type.clone(),
-            passing_score: rule.passing_score,
-            empty_score: rule.empty_score,
-            lock_hour: rule.lock_hour,
-            ip_retry_limit: rule.ip_retry_limit,
-            account_retry_limit: rule.account_retry_limit,
-            questions: rule
-                .questions_json
-                .as_deref()
-                .and_then(|j| serde_json::from_str(j).ok())
-                .unwrap_or_default(),
-        };
-
         // 2. Check + increment rate limits
         self.check_and_incr_retry_limit(
             merchant_code,
             customer_ip,
             customer_name,
-            rule_cfg.ip_retry_limit,
-            rule_cfg.account_retry_limit,
+            merchant_rule.ip_retry_limit,
+            merchant_rule.account_retry_limit,
         )
         .await?;
 
@@ -214,8 +198,9 @@ impl PlayerVerificationService {
             return Err(AppError::PhoneAlreadyBound);
         }
 
-        // 6. Build question list (with dropdown items from field cache)
-        let questions = self.get_valid_question_infos(&rule_cfg, merchant_code).await;
+        // 5. Build question list — parse from raw CLOB + enrich with dropdown cache
+        // Matches Go: questions, err := getValidQuestionInfos(merchantRule, merchantCode)
+        let questions = self.get_valid_question_infos(&merchant_rule, merchant_code).await?;
 
         Ok(MerchantRuleResponse {
             merchant_code: merchant_code.to_string(),
@@ -278,12 +263,16 @@ impl PlayerVerificationService {
             .map_err(|e| AppError::Internal(e))?
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
-        // 4. Parse merchant question configuration
+        // 4. Parse merchant question configuration (on demand — matches Go step 4)
         let questions_map: HashMap<String, Question> = rule_cfg
-            .questions
-            .iter()
-            .filter(|q| q.valid && !q.field_id.is_empty())
-            .map(|q| (q.field_id.clone(), q.clone()))
+            .parse_questions()
+            .map_err(|e| {
+                tracing::warn!(merchant_code, error = %e, "QUESTIONS CLOB unmarshal failed");
+                AppError::Internal(anyhow::anyhow!("parse questions failed: {}", e))
+            })?
+            .into_iter()
+            .filter(|(_, q)| q.valid && !q.field_id.is_empty())
+            .map(|(k, q)| (k, q))
             .collect();
 
         // 5. Score profile fields (tracking submitted IDs for step 7)
@@ -495,35 +484,71 @@ impl PlayerVerificationService {
 
     // ── Question list builder ─────────────────────────────────────────────────
 
+    /// Mirrors Go's `getValidQuestionInfos(m *model.MerchantRule, merchantCode string)`:
+    ///   1. Parse raw QUESTIONS CLOB as `HashMap<String, Question>`
+    ///   2. Filter by `valid == true && field_id != ""`
+    ///   3. Enrich DD fields with dropdown from cache
+    ///   4. Return `Result` — errors are propagated, never silently swallowed
     async fn get_valid_question_infos(
         &self,
-        rule_cfg: &MerchantRuleConfig,
+        rule: &MerchantRule,
         merchant_code: &str,
-    ) -> Vec<QuestionInfo> {
+    ) -> Result<Vec<QuestionInfo>, AppError> {
+        let raw = rule.questions_json.as_deref().unwrap_or("");
+        if raw.is_empty() {
+            tracing::warn!(merchant_code, "questions field is empty");
+            return Err(AppError::Internal(anyhow::anyhow!("questions field is empty")));
+        }
+
+        let all: std::collections::HashMap<String, Question> =
+            serde_json::from_str(raw).map_err(|e| {
+                tracing::warn!(
+                    merchant_code,
+                    error = %e,
+                    json_preview = &raw[..raw.len().min(200)],
+                    "unmarshal questions failed"
+                );
+                AppError::Internal(anyhow::anyhow!("unmarshal questions failed: {}", e))
+            })?;
+
+        tracing::info!(
+            merchant_code,
+            total_questions = all.len(),
+            "getValidQuestionInfos: parsed QUESTIONS CLOB"
+        );
+
         let dd_map = get_field_config(merchant_code).await;
 
-        rule_cfg
-            .questions
-            .iter()
+        let result: Vec<QuestionInfo> = all
+            .into_values()
             .filter(|q| q.valid && !q.field_id.is_empty())
             .map(|q| {
                 let dropdown = if q.field_attribute == "DD" {
                     dd_map
                         .as_ref()
                         .and_then(|m| m.get(q.field_id.as_str()))
+                        .filter(|v| !v.is_empty())
                         .cloned()
                 } else {
                     None
                 };
                 QuestionInfo {
-                    field_id: q.field_id.clone(),
-                    field_name: q.field_name.clone(),
-                    field_attribute: q.field_attribute.clone(),
-                    field_type: q.field_type.clone(),
+                    field_id: q.field_id,
+                    field_name: q.field_name,
+                    field_attribute: q.field_attribute,
+                    field_type: q.field_type,
                     field_dropdown_list: dropdown,
                 }
             })
-            .collect()
+            .collect();
+
+        tracing::info!(
+            merchant_code,
+            valid_questions = result.len(),
+            "getValidQuestionInfos: filtered result"
+        );
+
+        Ok(result)
     }
 }
 

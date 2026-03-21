@@ -185,3 +185,16 @@ pub async fn get_field_config(
 pub fn set_field_config(key: String, value: HashMap<String, Vec<DropdownItem>>) {
     global_configs().insert(key, value);
 }
+
+/// Return a snapshot of all merchant → dropdown configs.
+///
+/// Mirrors Go's `GetAllFieldConfigs()` which calls `initWg.Wait()` then
+/// iterates `GlobalFieldConfigs` (sync.Map) to build the full map.
+pub async fn get_all_field_configs() -> HashMap<String, HashMap<String, Vec<DropdownItem>>> {
+    wait_for_init().await;
+    let cache = global_configs();
+    cache
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().clone()))
+        .collect()
+}

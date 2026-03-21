@@ -24,6 +24,8 @@ pub struct MerchantRule {
 }
 
 /// Slim config version used in the verification flow.
+/// Mirrors Go's `model.MerchantRuleConfig` — stores the raw QUESTIONS CLOB;
+/// parsing happens on demand via `parse_questions()` so errors are propagated.
 #[derive(Debug, Clone)]
 pub struct MerchantRuleConfig {
     pub id: i64,
@@ -34,21 +36,22 @@ pub struct MerchantRuleConfig {
     pub lock_hour: i32,
     pub ip_retry_limit: i32,
     pub account_retry_limit: i32,
-    /// Parsed questions map (fieldId → Question).
-    pub questions: Vec<Question>,
+    /// Raw JSON CLOB from DB — parsed on demand, matching Go.
+    pub questions_json: Option<String>,
 }
 
 impl MerchantRuleConfig {
-    /// Parse the `questions_json` field into a map keyed by fieldId.
-    pub fn parse_questions_map(
-        json: &str,
-    ) -> anyhow::Result<std::collections::HashMap<String, Question>> {
-        let questions: Vec<Question> = serde_json::from_str(json)?;
-        Ok(questions
-            .into_iter()
-            .filter(|q| q.valid && !q.field_id.is_empty())
-            .map(|q| (q.field_id.clone(), q))
-            .collect())
+    /// Parse QUESTIONS CLOB into a map keyed by fieldId.
+    /// Mirrors Go's `(c *MerchantRuleConfig) ParseQuestions()`.
+    pub fn parse_questions(&self) -> anyhow::Result<std::collections::HashMap<String, Question>> {
+        let raw = self.questions_json.as_deref().unwrap_or("");
+        if raw.is_empty() {
+            anyhow::bail!("questions field is empty for merchant: {}", self.merchant_code);
+        }
+        let map: std::collections::HashMap<String, Question> =
+            serde_json::from_str(raw)
+                .map_err(|e| anyhow::anyhow!("unmarshal questions failed for merchant {}: {}", self.merchant_code, e))?;
+        Ok(map)
     }
 }
 
@@ -88,6 +91,11 @@ pub struct QuestionInfo {
     pub field_attribute: String,
     #[serde(rename = "fieldType")]
     pub field_type: String,
-    #[serde(rename = "fieldDropdownList", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "fieldDropdownList", skip_serializing_if = "is_dropdown_empty")]
     pub field_dropdown_list: Option<Vec<crate::model::template::DropdownItem>>,
+}
+
+/// Mirrors Go's `omitempty` for slices: skip when None OR empty.
+fn is_dropdown_empty(v: &Option<Vec<crate::model::template::DropdownItem>>) -> bool {
+    v.as_ref().map_or(true, |list| list.is_empty())
 }

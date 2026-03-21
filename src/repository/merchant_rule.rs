@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig, Question};
+use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig};
 use crate::model::template::{DropdownItem, TemplateField};
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ impl MerchantRuleRepository {
             lock_hour:            row.get::<_, i32>(7).unwrap_or(0),
             binding_type:         row.get::<_, String>(8).context("BINDING_TYPE")?,
             passing_score:        row.get::<_, i32>(9).context("PASSING_SCORE")?,
-            questions_json:       row.get::<_, Option<String>>(10).unwrap_or_default(),
+            questions_json:       row.get::<_, Option<String>>(10).context("QUESTIONS")?,
             template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
             created_at:           None,
             updated_at:           None,
@@ -280,26 +280,18 @@ impl MerchantRuleRepository {
         merchant_code: &str,
     ) -> Result<Option<MerchantRuleConfig>> {
         let rule = self.find_by_merchant_code(merchant_code).await?;
-        Ok(rule.map(|r| MerchantRuleConfig {
-            id:                  r.id,
-            merchant_code:       r.merchant_code,
-            binding_type:        r.binding_type,
-            passing_score:       r.passing_score,
-            empty_score:         r.empty_score,
-            lock_hour:           r.lock_hour,
-            ip_retry_limit:      r.ip_retry_limit,
-            account_retry_limit: r.account_retry_limit,
-            // QUESTIONS CLOB is a JSON *object* keyed by fieldId — NOT an array.
-            questions: r
-                .questions_json
-                .as_deref()
-                .and_then(|j| {
-                    serde_json::from_str::<std::collections::HashMap<String, Question>>(j)
-                        .map_err(|e| tracing::warn!(error = %e, "get_rule_config: parse questions_json failed"))
-                        .ok()
-                        .map(|m| m.into_values().collect::<Vec<_>>())
-                })
-                .unwrap_or_default(),
+        Ok(rule.map(|r| {
+            MerchantRuleConfig {
+                id:                  r.id,
+                merchant_code:       r.merchant_code,
+                binding_type:        r.binding_type,
+                passing_score:       r.passing_score,
+                empty_score:         r.empty_score,
+                lock_hour:           r.lock_hour,
+                ip_retry_limit:      r.ip_retry_limit,
+                account_retry_limit: r.account_retry_limit,
+                questions_json:      r.questions_json,
+            }
         }))
     }
 
@@ -437,7 +429,7 @@ impl MerchantRuleRepository {
             lock_hour:            row.get::<_, i32>(7).unwrap_or(0),
             binding_type:         row.get::<_, String>(8).unwrap_or_default(),
             passing_score:        row.get::<_, i32>(9).unwrap_or(0),
-            questions_json:       row.get::<_, Option<String>>(10).unwrap_or_default(),
+            questions_json:       row.get::<_, Option<String>>(10).context("QUESTIONS")?,
             template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
             created_at:           row.get::<_, Option<chrono::NaiveDateTime>>(12)
                 .unwrap_or_default()
@@ -615,5 +607,215 @@ impl MerchantRuleRepository {
             .map_err(|_| anyhow!("merchant_rule delete timed out"))?
             .context("spawn_blocking panicked")?
     }
+
+    // ── Additional methods mirroring Go's MerchantRuleRepository ─────────────
+
+    /// Fetch and lock a merchant rule by ID inside a transaction-like flow.
+    ///
+    /// Mirrors Go's `FindOneForUpdate(tx, id)` which uses
+    /// `SELECT ... FOR UPDATE WAIT <lockTimeout>`.
+    ///
+    /// Because `rust-oracle` connections are not transactional by default
+    /// (auto-commit is off until explicit `conn.commit()`), we use a dedicated
+    /// connection from the pool, issue `SELECT ... FOR UPDATE WAIT N`,
+    /// and return both the rule and the connection so the caller can
+    /// `conn.commit()` or `conn.rollback()` later.
+    pub async fn find_one_for_update(
+        &self,
+        id: i64,
+        lock_timeout_secs: u32,
+    ) -> Result<(MerchantRule, r2d2::PooledConnection<OracleConnectionManager>)> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let sql = format!(
+                "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1 FOR UPDATE WAIT {}",
+                RULE_COLS_FULL, lock_timeout_secs
+            );
+            let rows = conn.query(&sql, &[&id]).context("FindOneForUpdate query")?;
+
+            for row_result in rows {
+                let row = row_result.context("FindOneForUpdate row read")?;
+                let rule = Self::map_full_row(row)?;
+                return Ok((rule, conn));
+            }
+            Err(anyhow!("FindOneForUpdate: no row for id={}", id))
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_one_for_update timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Dynamic single-row SELECT with optional FOR UPDATE.
+    ///
+    /// Mirrors Go's `FindOnlyByEx(ctx, ex, tx, forUpdateWaitOpt)`.
+    ///
+    /// `where_clause` is a raw SQL fragment (e.g. `"MERCHANT_CODE = :1 AND IS_DEFAULT = :2"`).
+    /// `params` are the bind values in positional order.
+    /// `for_update` controls locking: `None` = no lock, `Some(secs)` = `FOR UPDATE WAIT <secs>`.
+    pub async fn find_only_by_expression(
+        &self,
+        where_clause: &str,
+        params: Vec<Box<dyn oracle::sql_type::ToSql + Send>>,
+        for_update: Option<u32>,
+    ) -> Result<Option<MerchantRule>> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+        let wc      = where_clause.to_string();
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+
+            let mut sql = format!(
+                "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE {}",
+                RULE_COLS_FULL, wc
+            );
+            if let Some(wait_secs) = for_update {
+                sql.push_str(&format!(" FOR UPDATE WAIT {}", wait_secs));
+            }
+
+            let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
+                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+            let rows = conn.query(&sql, param_refs.as_slice())
+                .context("FindOnlyByExpression query")?;
+
+            for row_result in rows {
+                let row = row_result.context("FindOnlyByExpression row read")?;
+                return Ok(Some(Self::map_full_row(row)?));
+            }
+            Ok(None)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_only_by_expression timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Dynamic multi-row SELECT with optional ordering and pagination.
+    ///
+    /// Mirrors Go's `FindList(ctx, ex, optionalParams...)`.
+    ///
+    /// `where_clause` — raw SQL WHERE fragment (e.g. `"IS_DEFAULT = :1"`).
+    /// `params`       — positional bind values.
+    /// `order_by`     — optional ORDER BY clause (e.g. `"CREATED_AT DESC"`).
+    /// `pagination`   — optional `(page, page_size)` for Oracle OFFSET/FETCH.
+    pub async fn find_list(
+        &self,
+        where_clause: &str,
+        params: Vec<Box<dyn oracle::sql_type::ToSql + Send>>,
+        order_by: Option<&str>,
+        pagination: Option<(u32, u32)>,
+    ) -> Result<Vec<MerchantRule>> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+        let wc      = where_clause.to_string();
+        let ob      = order_by.map(|s| s.to_string());
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+
+            let mut sql = format!(
+                "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE {}",
+                RULE_COLS_FULL, wc
+            );
+            if let Some(ref order) = ob {
+                sql.push_str(&format!(" ORDER BY {}", order));
+            }
+            if let Some((page, page_size)) = pagination {
+                let offset = (page.saturating_sub(1)) * page_size;
+                sql.push_str(&format!(" OFFSET {} ROWS FETCH NEXT {} ROWS ONLY", offset, page_size));
+            }
+
+            let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
+                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+            let rows = conn.query(&sql, param_refs.as_slice())
+                .context("FindList query")?;
+
+            let mut result = Vec::new();
+            for row_result in rows {
+                let row = row_result.context("FindList row read")?;
+                result.push(Self::map_full_row(row)?);
+            }
+            Ok(result)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_list timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Dynamic UPDATE with arbitrary SET and WHERE clauses.
+    ///
+    /// Mirrors Go's `UpdateByEx(ctx, record, ex, tx)`.
+    ///
+    /// `set_clause`    — raw SQL SET fragment (e.g. `"QUESTIONS = :1, UPDATED_AT = SYSTIMESTAMP"`).
+    /// `where_clause`  — raw SQL WHERE fragment (e.g. `"MERCHANT_CODE = :2"`).
+    /// `params`        — all bind values for both SET and WHERE in positional order.
+    pub async fn update_by_expression(
+        &self,
+        set_clause: &str,
+        where_clause: &str,
+        params: Vec<Box<dyn oracle::sql_type::ToSql + Send>>,
+    ) -> Result<u64> {
+        let pool    = self.pool.clone();
+        let timeout = self.read_timeout;
+        let sc      = set_clause.to_string();
+        let wc      = where_clause.to_string();
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+
+            let sql = format!(
+                "UPDATE TCG_UCS.MERCHANT_RULE SET {}, UPDATED_AT = SYSTIMESTAMP WHERE {}",
+                sc, wc
+            );
+
+            let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
+                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+            let stmt = conn.execute(&sql, param_refs.as_slice())
+                .context("UpdateByExpression execute")?;
+            let rows = stmt.row_count().context("row_count")?;
+            conn.commit().context("UpdateByExpression commit")?;
+            Ok(rows)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("update_by_expression timed out"))?
+            .context("spawn_blocking panicked")?
+    }
+
+    /// Update TEMPLATE_FIELDS using an existing connection (transaction).
+    ///
+    /// Mirrors Go's `UpdateTemplateFieldsByMerchantCodeTx(tx, merchantCode, templateFields)`.
+    ///
+    /// The caller must pass in a pooled connection that already holds a
+    /// transaction (e.g. from `find_one_for_update`).  This method does NOT
+    /// commit — the caller is responsible for `conn.commit()`.
+    pub fn update_template_fields_tx(
+        conn: &oracle::Connection,
+        merchant_code: &str,
+        template_fields: &str,
+    ) -> Result<u64> {
+        let sql = "UPDATE TCG_UCS.MERCHANT_RULE                    SET TEMPLATE_FIELDS = :1, UPDATED_AT = SYSTIMESTAMP                    WHERE MERCHANT_CODE = :2";
+        let stmt = conn
+            .execute(sql, &[&template_fields, &merchant_code])
+            .context("UpdateTemplateFieldsTx execute")?;
+        let rows = stmt.row_count().context("row_count")?;
+        if rows == 0 {
+            return Err(anyhow!(
+                "no merchant rule found for merchantCode: {}",
+                merchant_code
+            ));
+        }
+        Ok(rows)
+    }
+
 
 }
