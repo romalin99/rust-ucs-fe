@@ -22,12 +22,17 @@ use crate::repository::MerchantRuleRepository;
 
 // ── Global cache ─────────────────────────────────────────────────────────────
 
-/// Global field-config cache: merchantCode → fieldId → Vec<DropdownItem>.
-pub static GLOBAL_FIELD_CONFIGS: OnceCell<Arc<DashMap<String, HashMap<String, Vec<DropdownItem>>>>> =
+/// Dropdown map for a single merchant (wrapped in Arc to avoid deep cloning on read).
+pub type MerchantDropdownMap = Arc<HashMap<String, Vec<DropdownItem>>>;
+
+/// Global field-config cache: merchantCode → Arc<fieldId → Vec<DropdownItem>>.
+/// Using `Arc<HashMap>` as values means `get_field_config` returns a cheap
+/// `Arc::clone` (~1 ns) instead of deep-cloning the entire map (~µs).
+pub static GLOBAL_FIELD_CONFIGS: OnceCell<Arc<DashMap<String, MerchantDropdownMap>>> =
     OnceCell::new();
 
 /// Get (or lazily create) the global map.
-pub fn global_configs() -> Arc<DashMap<String, HashMap<String, Vec<DropdownItem>>>> {
+pub fn global_configs() -> Arc<DashMap<String, MerchantDropdownMap>> {
     GLOBAL_FIELD_CONFIGS
         .get_or_init(|| Arc::new(DashMap::new()))
         .clone()
@@ -97,7 +102,7 @@ pub async fn do_load_field_configs(repo: &MerchantRuleRepository) -> Result<()> 
                 "Loaded field config entry"
             );
         }
-        cache.insert(merchant_code, dd_map);
+        cache.insert(merchant_code, Arc::new(dd_map));
     }
 
     tracing::info!(
@@ -175,26 +180,24 @@ impl InitLoadingData {
 ///
 /// **Waits** for the initial DB load to complete before reading the cache —
 /// mirrors Go's `GetFieldConfig` which calls `initWg.Wait()` internally.
-pub async fn get_field_config(
-    merchant_code: &str,
-) -> Option<HashMap<String, Vec<DropdownItem>>> {
+pub async fn get_field_config(merchant_code: &str) -> Option<MerchantDropdownMap> {
     wait_for_init().await;
-    global_configs().get(merchant_code).map(|v| v.clone())
+    global_configs().get(merchant_code).map(|v| Arc::clone(v.value()))
 }
 
 pub fn set_field_config(key: String, value: HashMap<String, Vec<DropdownItem>>) {
-    global_configs().insert(key, value);
+    global_configs().insert(key, Arc::new(value));
 }
 
 /// Return a snapshot of all merchant → dropdown configs.
 ///
 /// Mirrors Go's `GetAllFieldConfigs()` which calls `initWg.Wait()` then
 /// iterates `GlobalFieldConfigs` (sync.Map) to build the full map.
-pub async fn get_all_field_configs() -> HashMap<String, HashMap<String, Vec<DropdownItem>>> {
+pub async fn get_all_field_configs() -> HashMap<String, MerchantDropdownMap> {
     wait_for_init().await;
     let cache = global_configs();
     cache
         .iter()
-        .map(|entry| (entry.key().clone(), entry.value().clone()))
+        .map(|entry| (entry.key().clone(), Arc::clone(entry.value())))
         .collect()
 }

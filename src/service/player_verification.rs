@@ -137,50 +137,34 @@ impl PlayerVerificationService {
         )
         .await?;
 
-        // 3. WPS: get reset-password-status
+        // 3+4. WPS + USS — fire both concurrently (biggest latency win)
+        let full_customer_name = format!("{}@{}", merchant_code, customer_name);
         let t = Instant::now();
-        let wps_resp = self
-            .wps
-            .get_reset_password_status(merchant_code)
-            .await
-            .map_err(|e| AppError::WpsApiFailed(e.to_string()))?;
-        tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[WPSClient] GetResetPasswordStatus");
+
+        let (wps_result, uss_result) = tokio::join!(
+            self.wps.get_reset_password_status(merchant_code),
+            self.uss.get_customer(&full_customer_name, false),
+        );
+
+        let wps_resp = wps_result.map_err(|e| AppError::WpsApiFailed(e.to_string()))?;
+        let customer = uss_result.map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
+
+        tracing::info!(
+            merchant_code,
+            elapsed_ms = %t.elapsed().as_millis(),
+            wps_email = wps_resp.value.is_email_reset_enabled,
+            wps_sms   = wps_resp.value.is_sms_reset_enabled,
+            "[WPS+USS] parallel fetch done"
+        );
 
         if !wps_resp.success {
-            tracing::warn!(
-                merchant_code,
-                "WPS reset-password-status returned success=false"
-            );
             return Err(AppError::WpsApiFailed("success=false".to_string()));
         }
 
-        tracing::info!(
-            wps_email = wps_resp.value.is_email_reset_enabled,
-            wps_sms = wps_resp.value.is_sms_reset_enabled,
-            "[WPSClient] resetPasswordStatusResp"
-        );
-
-        // 4. USS: get customer
-        let full_customer_name = format!("{}@{}", merchant_code, customer_name);
-        let t = Instant::now();
-        let customer = self
-            .uss
-            .get_customer(&full_customer_name, false)
-            .await
-            .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
-        tracing::info!(merchant_code, customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomer");
-
+        let wps_email = wps_resp.value.is_email_reset_enabled;
+        let wps_sms   = wps_resp.value.is_sms_reset_enabled;
         let verification_mode = &customer.value.profile.verification_mode.val;
         let email_verification = customer.value.customer_additional_info.email_verification;
-
-        tracing::info!(
-            verification_mode = %verification_mode,
-            email_verification,
-            "[USS] customer info"
-        );
-
-        let wps_email = wps_resp.value.is_email_reset_enabled;
-        let wps_sms = wps_resp.value.is_sms_reset_enabled;
 
         tracing::info!(
             wps_email, wps_sms, email_verification, verification_mode = %verification_mode,
@@ -189,12 +173,10 @@ impl PlayerVerificationService {
 
         // 5. Business rules: email/phone already bound
         if wps_email && email_verification {
-            tracing::info!(wps_email, email_verification, "[WPS-USS] email enabled");
             return Err(AppError::EmailAlreadyBound);
         }
 
         if wps_sms && verification_mode == "0" {
-            tracing::info!(wps_sms, verification_mode = %verification_mode, "[WPS-USS] phone enabled");
             return Err(AppError::PhoneAlreadyBound);
         }
 
@@ -502,50 +484,39 @@ impl PlayerVerificationService {
 
         let all: std::collections::HashMap<String, Question> =
             serde_json::from_str(raw).map_err(|e| {
-                tracing::warn!(
-                    merchant_code,
-                    error = %e,
-                    json_preview = &raw[..raw.len().min(200)],
-                    "unmarshal questions failed"
-                );
+                tracing::warn!(merchant_code, error = %e, "unmarshal questions failed");
                 AppError::Internal(anyhow::anyhow!("unmarshal questions failed: {}", e))
             })?;
 
-        tracing::info!(
-            merchant_code,
-            total_questions = all.len(),
-            "getValidQuestionInfos: parsed QUESTIONS CLOB"
-        );
-
         let dd_map = get_field_config(merchant_code).await;
 
-        let result: Vec<QuestionInfo> = all
-            .into_values()
-            .filter(|q| q.valid && !q.field_id.is_empty())
-            .map(|q| {
-                let dropdown = if q.field_attribute == "DD" {
-                    dd_map
-                        .as_ref()
-                        .and_then(|m| m.get(q.field_id.as_str()))
-                        .filter(|v| !v.is_empty())
-                        .cloned()
-                } else {
-                    None
-                };
-                QuestionInfo {
-                    field_id: q.field_id,
-                    field_name: q.field_name,
-                    field_attribute: q.field_attribute,
-                    field_type: q.field_type,
-                    field_dropdown_list: dropdown,
-                }
-            })
-            .collect();
+        let mut result = Vec::with_capacity(all.len());
+        for (_, q) in all {
+            if !q.valid || q.field_id.is_empty() {
+                continue;
+            }
+            let dropdown = if q.field_attribute == "DD" {
+                dd_map
+                    .as_ref()
+                    .and_then(|m| m.get(q.field_id.as_str()))
+                    .filter(|v| !v.is_empty())
+                    .cloned()
+            } else {
+                None
+            };
+            result.push(QuestionInfo {
+                field_id: q.field_id,
+                field_name: q.field_name,
+                field_attribute: q.field_attribute,
+                field_type: q.field_type,
+                field_dropdown_list: dropdown,
+            });
+        }
 
         tracing::info!(
             merchant_code,
             valid_questions = result.len(),
-            "getValidQuestionInfos: filtered result"
+            "getValidQuestionInfos done"
         );
 
         Ok(result)

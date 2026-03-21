@@ -464,10 +464,10 @@ impl UssClient {
     /// Mirrors Go's `NewClient(host, basePath)`.
     pub fn new(cfg: &ServiceConfig) -> Self {
         let inner = Client::builder()
-            // Pool settings mirror Go's `http.Transport`
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(30)
-            .timeout(SINGLE_REQ_TIMEOUT)
+            // No client-level timeout — per-attempt timeout is applied via
+            // tokio::time::timeout in do_with_retry (avoids double-timeout overhead).
             .build()
             .expect("Failed to build USS HTTP client");
 
