@@ -204,10 +204,10 @@ impl AppInfra {
             elapsed_us = t_oracle.elapsed().as_micros(),
             "Oracle pool struct created (no TCP yet)"
         );
-        // Background ping — mirrors Go's db.Ping() after sql.Open().
-        // Does NOT block startup; logs result when the first TCP connection
-        // to Oracle completes (or fails).
-        ping_pool(oracle_pool.clone());
+        // Blocking ping — mirrors Go's db.Ping() after sql.Open().
+        // Awaited so the pool has a warm connection before the first real
+        // query (field-config load), avoiding ~1 s connection-creation overhead.
+        ping_pool(oracle_pool.clone()).await;
 
         // ── Redis ─────────────────────────────────────────────────────────────
         tracing::info!("Connecting to Redis");

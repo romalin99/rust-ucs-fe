@@ -45,7 +45,14 @@ impl r2d2::ManageConnection for OracleConnectionManager {
     type Error = oracle::Error;
 
     fn connect(&self) -> std::result::Result<oracle::Connection, oracle::Error> {
-        oracle::Connection::connect(&self.user, &self.password, &self.connect_string)
+        let mut conn = oracle::Connection::connect(&self.user, &self.password, &self.connect_string)?;
+        // Prefetch LOB data inline with row fetches — eliminates extra round-trips
+        // for CLOB columns (QUESTIONS, TEMPLATE_FIELDS).
+        // Default is 0 (no prefetch → 1 extra round-trip per CLOB per row).
+        // 128 KB covers typical QUESTIONS (~10-50 KB) and TEMPLATE_FIELDS (~2-8 KB).
+        conn.set_oci_attr::<oracle::oci_attr::DefaultLobPrefetchSize>(&(128 * 1024))
+            .unwrap_or_else(|e| tracing::warn!(error = %e, "failed to set DefaultLobPrefetchSize"));
+        Ok(conn)
     }
 
     fn is_valid(&self, conn: &mut oracle::Connection) -> std::result::Result<(), oracle::Error> {
@@ -127,13 +134,14 @@ pub fn build_pool(
         .build_unchecked(manager)
 }
 
-/// Validate Oracle connectivity in a background task.
+/// Validate Oracle connectivity and warm the connection pool.
 ///
-/// Mirrors Go's `db.Ping()` call after `sql.Open`.
-/// Runs in `spawn_blocking` so it never blocks the async runtime.
-/// Logs success or the error without crashing the application.
-pub fn ping_pool(pool: Arc<OraclePool>) {
-    tokio::task::spawn_blocking(move || {
+/// Mirrors Go's blocking `db.Ping()` call after `sql.Open`.
+/// Awaiting this ensures the pool has a warm connection before the
+/// first real query (e.g. `find_all_as_map`), avoiding ~1 s of
+/// connection-creation overhead on the critical path.
+pub async fn ping_pool(pool: Arc<OraclePool>) {
+    let result = tokio::task::spawn_blocking(move || {
         let start = std::time::Instant::now();
         match pool.get() {
             Ok(conn) => match conn.ping() {
@@ -145,7 +153,12 @@ pub fn ping_pool(pool: Arc<OraclePool>) {
             },
             Err(e) => tracing::warn!(error = %e, "Oracle pool: could not get connection for ping"),
         }
-    });
+    })
+    .await;
+
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "ping_pool: spawn_blocking panicked");
+    }
 }
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -308,17 +321,26 @@ impl MerchantRuleRepository {
         let timeout = self.read_timeout;
 
         let blocking = tokio::task::spawn_blocking(move || {
+            let t0 = std::time::Instant::now();
             let conn = pool.get().context("Oracle pool: get connection")?;
+            let pool_get_ms = t0.elapsed().as_millis();
 
             // Read only the two columns we need — avoid fetching heavy CLOBs.
             let sql = "SELECT MERCHANT_CODE, TEMPLATE_FIELDS \
                        FROM TCG_UCS.MERCHANT_RULE \
                        WHERE TEMPLATE_FIELDS IS NOT NULL";
 
-            let rows = conn
-                .query(sql, &[])
+            let mut stmt = conn
+                .statement(sql)
+                .prefetch_rows(100)
+                .fetch_array_size(100)
+                .build()
+                .context("find_all_as_map prepare")?;
+            let rows = stmt
+                .query(&[])
                 .context("find_all_as_map query")?;
 
+            let query_ms = t0.elapsed().as_millis() - pool_get_ms;
             let mut result: HashMap<String, HashMap<String, Vec<DropdownItem>>> = HashMap::new();
 
             for row_result in rows {
@@ -359,8 +381,13 @@ impl MerchantRuleRepository {
                 }
             }
 
+            let iterate_ms = t0.elapsed().as_millis() - pool_get_ms - query_ms;
             tracing::info!(
                 total_merchants = result.len(),
+                pool_get_ms,
+                query_ms,
+                iterate_ms,
+                total_ms = t0.elapsed().as_millis(),
                 "find_all_as_map: merchant field-config map loaded"
             );
             Ok(result)
