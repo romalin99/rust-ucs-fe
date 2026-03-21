@@ -119,30 +119,87 @@ impl PlayerVerificationService {
         customer_ip: &str,
         customer_name: &str,
     ) -> Result<MerchantRuleResponse, AppError> {
-        // 1. Fetch merchant rule (raw — matches Go's FindByMerchantCode)
-        let merchant_rule = self
-            .merchant_repo
-            .find_by_merchant_code(merchant_code)
-            .await
-            .map_err(|e| AppError::Internal(e))?
+        // ── Phase 1: DB + Redis GET in parallel ──────────────────────────
+        // Redis keys only depend on request params, not on the DB result,
+        // so we can fire both at the same time.
+        let today = today_key();
+        let ip_k  = ip_key(merchant_code, customer_name, customer_ip, &today);
+        let ac_k  = acct_key(merchant_code, customer_name, &today);
+
+        let mut c1 = self.redis.clone();
+        let mut c2 = self.redis.clone();
+        let ip_k_r = ip_k.clone();
+        let ac_k_r = ac_k.clone();
+
+        let (db_result, ip_cnt, ac_cnt) = tokio::try_join!(
+            async {
+                self.merchant_repo
+                    .find_by_merchant_code(merchant_code)
+                    .await
+                    .map_err(|e| AppError::Internal(e))
+            },
+            async {
+                let v: Option<i64> = redis::AsyncCommands::get(&mut c1, &ip_k_r)
+                    .await
+                    .map_err(AppError::RedisError)?;
+                Ok::<i64, AppError>(v.unwrap_or(0))
+            },
+            async {
+                let v: Option<i64> = redis::AsyncCommands::get(&mut c2, &ac_k_r)
+                    .await
+                    .map_err(AppError::RedisError)?;
+                Ok::<i64, AppError>(v.unwrap_or(0))
+            },
+        )?;
+
+        let merchant_rule = db_result
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
-        // 2. Check + increment rate limits
-        self.check_and_incr_retry_limit(
-            merchant_code,
-            customer_ip,
-            customer_name,
-            merchant_rule.ip_retry_limit,
-            merchant_rule.account_retry_limit,
-        )
-        .await?;
+        // ── Rate-limit check ─────────────────────────────────────────────
+        let ip_limit  = merchant_rule.ip_retry_limit as i64;
+        let acct_limit = merchant_rule.account_retry_limit as i64;
 
-        // 3+4. WPS + USS — fire both concurrently (biggest latency win)
+        tracing::info!(
+            merchant_code, customer_name, customer_ip, today,
+            ip_cnt, ip_limit, ac_cnt, acct_limit,
+            "retryLimit check"
+        );
+
+        if ip_cnt >= ip_limit || ac_cnt >= acct_limit {
+            tracing::warn!(
+                merchant_code, customer_name, customer_ip,
+                ip_cnt, ip_limit, ac_cnt, acct_limit,
+                "question retry limit exhausted"
+            );
+            return Err(AppError::QuestionLimitExceeded);
+        }
+
+        // ── Phase 2: Redis INCR + WPS + USS — all three in parallel ─────
+        // INCR (82ms) hides completely behind the slower HTTP calls (~176ms).
         let full_customer_name = format!("{}@{}", merchant_code, customer_name);
+        let expire_at = end_of_day_unix();
+        let script = redis::Script::new(INCR_WITH_TTL_SCRIPT);
+        let mut incr_c1 = self.redis.clone();
+        let mut incr_c2 = self.redis.clone();
         let t = Instant::now();
 
-        let (wps_result, uss_result) = tokio::join!(
+        let (_, wps_result, uss_result) = tokio::join!(
+            // Redis INCR (fire-and-log, never blocks the response)
+            async {
+                let mut k1 = script.key(&ip_k);
+                let inv1 = k1.arg(expire_at);
+                let mut k2 = script.key(&ac_k);
+                let inv2 = k2.arg(expire_at);
+                let (r1, r2) = tokio::join!(
+                    inv1.invoke_async::<i64>(&mut incr_c1),
+                    inv2.invoke_async::<i64>(&mut incr_c2),
+                );
+                if let Err(e) = r1 { tracing::warn!(error = %e, key = %ip_k, "redis incr failed"); }
+                if let Err(e) = r2 { tracing::warn!(error = %e, key = %ac_k, "redis incr failed"); }
+            },
+            // WPS HTTP
             self.wps.get_reset_password_status(merchant_code),
+            // USS HTTP
             self.uss.get_customer(&full_customer_name, false),
         );
 
@@ -154,7 +211,7 @@ impl PlayerVerificationService {
             elapsed_ms = %t.elapsed().as_millis(),
             wps_email = wps_resp.value.is_email_reset_enabled,
             wps_sms   = wps_resp.value.is_sms_reset_enabled,
-            "[WPS+USS] parallel fetch done"
+            "[INCR+WPS+USS] parallel done"
         );
 
         if !wps_resp.success {
@@ -171,7 +228,6 @@ impl PlayerVerificationService {
             "WPS-USS flags"
         );
 
-        // 5. Business rules: email/phone already bound
         if wps_email && email_verification {
             return Err(AppError::EmailAlreadyBound);
         }
@@ -180,8 +236,7 @@ impl PlayerVerificationService {
             return Err(AppError::PhoneAlreadyBound);
         }
 
-        // 5. Build question list — parse from raw CLOB + enrich with dropdown cache
-        // Matches Go: questions, err := getValidQuestionInfos(merchantRule, merchantCode)
+        // ── Build question list ──────────────────────────────────────────
         let questions = self.get_valid_question_infos(&merchant_rule, merchant_code).await?;
 
         Ok(MerchantRuleResponse {
