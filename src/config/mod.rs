@@ -262,8 +262,8 @@ pub struct LogConfig {
     #[serde(default = "default_30_u32", rename = "bufferSize")]
     pub buffer_size:  u32,
 
-    /// Buffer flush interval in ms (default 50).
-    #[serde(default = "default_50_u32", rename = "bufferFlushInterval")]
+    /// Buffer flush interval in ms (default 10).
+    #[serde(default = "default_10_u32", rename = "bufferFlushInterval")]
     pub buffer_flush_interval: u32,
 
     /// Runtime environment tag (e.g. `"pro"` | `"dev"`).
@@ -292,7 +292,7 @@ impl Default for LogConfig {
             compress:               true,
             stat:                   true,
             buffer_size:            30,
-            buffer_flush_interval:  50,
+            buffer_flush_interval:  10,
             env:                    "pro".into(),
             output_path:            String::new(),
         }
@@ -501,7 +501,7 @@ fn default_10()         -> u32    { 10 }
 fn default_5()          -> u32    { 5 }
 fn default_true()       -> bool   { true }
 fn default_30_u32()     -> u32    { 30 }
-fn default_50_u32()     -> u32    { 50 }
+fn default_10_u32()     -> u32    { 10 }
 
 /// Loads Oracle credentials from AWS Secrets Manager based on `env`.
 pub async fn load_oracle_from_aws(env: &str) -> anyhow::Result<OracleConnectInfo> {

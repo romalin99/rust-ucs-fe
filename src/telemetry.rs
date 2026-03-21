@@ -14,9 +14,16 @@
 //! ```text
 //! [timestamp] [ServiceName] [LEVEL ] [file.go:42] - message | key=val, key2=val2
 //! ```
+//!
+//! ## Buffered I/O
+//!
+//! All log output flows through a shared `BufWriter<Stdout>` (default 30 MB)
+//! to avoid per-line syscalls.  A dedicated background thread flushes the
+//! buffer every N ms (default 10 ms, configurable via `bufferFlushInterval`).
 
 use std::fmt;
-use std::sync::OnceLock;
+use std::io::{self, BufWriter, Write};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::SecondsFormat;
 use serde_json::{Map, Value};
@@ -26,7 +33,7 @@ use tracing::{
 };
 use tracing_subscriber::{
     EnvFilter,
-    fmt::{FmtContext, FormatEvent, FormatFields, format},
+    fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter, format},
     layer::SubscriberExt,
     registry::LookupSpan,
     util::SubscriberInitExt,
@@ -42,6 +49,118 @@ static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 /// Returns the service name injected by `init_tracing`, or `"ucs-fe"`.
 pub fn service_name() -> &'static str {
     SERVICE_NAME.get().map(String::as_str).unwrap_or("ucs-fe")
+}
+
+// ── Buffered stdout writer ────────────────────────────────────────────────────
+
+/// Global handle for flushing from `logs::flush()` / `logs::close()`.
+static LOG_BUF: OnceLock<Arc<Mutex<BufWriter<io::Stdout>>>> = OnceLock::new();
+
+/// Shared buffered stdout — passed to `fmt::Layer::with_writer`.
+///
+/// A single `BufWriter<Stdout>` is protected by a `Mutex`.
+/// Each `make_writer` call returns a `BufGuard` (a `MutexGuard` wrapper)
+/// so only one thread writes at a time, just like `io::Stdout`'s internal
+/// lock, but batching many small writes into one large `write(2)` syscall.
+#[derive(Clone)]
+struct BufferedStdout(Arc<Mutex<BufWriter<io::Stdout>>>);
+
+/// RAII guard returned by `BufferedStdout::make_writer`.
+struct BufGuard<'a>(std::sync::MutexGuard<'a, BufWriter<io::Stdout>>);
+
+impl<'a> io::Write for BufGuard<'a> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<'a> MakeWriter<'a> for BufferedStdout {
+    type Writer = BufGuard<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        BufGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+/// Create the shared buffer and spawn the background flush thread.
+fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
+    let cap_bytes = (cfg.buffer_size.max(1) as usize) * 1024 * 1024;
+    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(cap_bytes, io::stdout())));
+
+    LOG_BUF.set(inner.clone()).ok();
+
+    let flush_ms = cfg.buffer_flush_interval.max(1) as u64;
+    let flush_interval = std::time::Duration::from_millis(flush_ms);
+    let writer = inner.clone();
+    std::thread::Builder::new()
+        .name("log-flusher".into())
+        .spawn(move || loop {
+            std::thread::sleep(flush_interval);
+            if let Ok(mut w) = writer.lock() {
+                let _ = w.flush();
+            }
+        })
+        .expect("failed to spawn log flush thread");
+
+    BufferedStdout(inner)
+}
+
+/// Flush the global log buffer immediately.
+///
+/// Safe to call from any thread; no-op before `init_tracing`.
+pub fn flush_log_buf() {
+    if let Some(buf) = LOG_BUF.get() {
+        if let Ok(mut w) = buf.lock() {
+            let _ = w.flush();
+        }
+    }
+}
+
+/// Best-effort flush that never blocks (uses `try_lock`).
+///
+/// Suitable for signal handlers and `atexit` where the mutex may already
+/// be held by the thread that triggered the exit.
+fn flush_log_buf_nonblocking() {
+    if let Some(buf) = LOG_BUF.get() {
+        if let Ok(mut w) = buf.try_lock() {
+            let _ = w.flush();
+        }
+    }
+}
+
+// ── Exit hooks ────────────────────────────────────────────────────────────────
+
+/// Install hooks that flush the log buffer on every possible exit path:
+///
+/// 1. **`atexit`** — called by `libc::exit()` which backs both
+///    `std::process::exit()` and normal `main` returns.
+/// 2. **Panic hook** — wraps the default hook so the buffer is flushed
+///    *before* the panic message hits stderr.
+///
+/// Must be called once, right after `init_tracing`.
+pub fn install_exit_hooks() {
+    // ── C atexit ──────────────────────────────────────────────────────────
+    unsafe extern "C" {
+        safe fn atexit(cb: extern "C" fn()) -> std::os::raw::c_int;
+    }
+    extern "C" fn on_exit() {
+        flush_log_buf_nonblocking();
+    }
+    atexit(on_exit);
+
+    // ── Panic hook ────────────────────────────────────────────────────────
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Flush first so all tracing output preceding the panic is visible.
+        flush_log_buf();
+        // Then run the default hook (prints the panic message to stderr).
+        default_hook(info);
+    }));
 }
 
 // ── Shared field visitor ──────────────────────────────────────────────────────
@@ -234,18 +353,27 @@ pub fn init_tracing(cfg: &LogConfig) {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&cfg.level));
 
+    let buf_writer = init_buffered_writer(cfg);
+
     if cfg.encoding == "json" {
         let _ = tracing_subscriber::registry()
             .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().event_format(JsonFormat))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .event_format(JsonFormat)
+                    .with_writer(buf_writer),
+            )
             .try_init();
     } else {
         let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(
                 tracing_subscriber::fmt::layer()
-                    .event_format(TextFormat::new(&cfg.service_name)),
+                    .event_format(TextFormat::new(&cfg.service_name))
+                    .with_writer(buf_writer),
             )
             .try_init();
     }
+
+    install_exit_hooks();
 }

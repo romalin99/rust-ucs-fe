@@ -134,6 +134,9 @@ impl Application {
         info!("infrastructure connections closed");
 
         info!("graceful shutdown complete");
+
+        // Final log buffer flush so the last lines are written to stdout.
+        crate::pkg::logs::close();
     }
 }
 
@@ -195,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
 
 // ── Shutdown signal handler ───────────────────────────────────────────────────
 
-/// Waits for SIGINT (Ctrl-C) or SIGTERM (systemd / k8s).
+/// Waits for SIGINT (Ctrl-C), SIGTERM (systemd / k8s), or SIGHUP.
 /// Mirrors Go's signal channel in `gracefulShutdown`.
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -212,12 +215,23 @@ async fn shutdown_signal() {
             .await;
     };
 
+    #[cfg(unix)]
+    let hangup = async {
+        signal::unix::signal(signal::unix::SignalKind::hangup())
+            .expect("failed to install SIGHUP handler")
+            .recv()
+            .await;
+    };
+
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
+    #[cfg(not(unix))]
+    let hangup = std::future::pending::<()>();
 
     tokio::select! {
         _ = ctrl_c    => info!("received SIGINT"),
         _ = terminate => info!("received SIGTERM"),
+        _ = hangup    => info!("received SIGHUP"),
     }
 
     info!("shutdown signal received, draining in-flight requests...");

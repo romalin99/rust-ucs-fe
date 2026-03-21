@@ -21,7 +21,7 @@
 ///   `user_id` / `trace_id` for call sites that have the values explicitly
 /// - Behavior logs route through `target: "behavior"` so a future appender
 ///   can filter them to a separate file (mirrors Go's `PathBehavior`)
-/// - Flush / Close are no-ops: `tracing` writes synchronously
+/// - Buffered I/O: writes go through a 30 MB `BufWriter` flushed every 10 ms
 ///
 /// # Usage
 ///
@@ -54,19 +54,21 @@ pub fn init(cfg: &LogConfig) {
     crate::telemetry::init_tracing(cfg);
 }
 
-/// Flush any buffered log entries.
+/// Flush the buffered log writer immediately.
 ///
-/// No-op in Rust: `tracing` writes synchronously.
 /// Mirrors Go's `logs.Flush()` and `logger.Flush()`.
 #[inline]
-pub fn flush() {}
+pub fn flush() {
+    crate::telemetry::flush_log_buf();
+}
 
-/// Close the logger and release file handles.
+/// Flush and close the logger.
 ///
-/// No-op in Rust: resources are released when the process exits.
 /// Mirrors Go's `logs.Close()` / `logger.Close()`.
 #[inline]
-pub fn close() {}
+pub fn close() {
+    crate::telemetry::flush_log_buf();
+}
 
 // ── Level parser ──────────────────────────────────────────────────────────────
 
@@ -124,6 +126,7 @@ pub fn error(msg: &str) {
 /// Mirrors Go's `logs.Fatal(ctx, msg, format...)`.
 pub fn fatal(msg: &str) -> ! {
     tracing::error!(fatal = true, "{}", msg);
+    crate::telemetry::flush_log_buf();
     std::process::exit(1);
 }
 
@@ -132,14 +135,18 @@ pub fn fatal(msg: &str) -> ! {
 /// Mirrors Go's `logs.Fatalf(ctx, format, args...)`.
 pub fn fatalf(msg: String) -> ! {
     tracing::error!(fatal = true, "{}", msg);
+    crate::telemetry::flush_log_buf();
     std::process::exit(1);
 }
 
 /// Formatted ERROR log then panic.
 ///
 /// Mirrors Go's `logs.Panicf(ctx, format, args...)`.
+/// The panic hook installed by `init_tracing` will also flush, but we
+/// flush here first for defense-in-depth.
 pub fn panic_log(msg: &str) -> ! {
     tracing::error!(panic = true, "{}", msg);
+    crate::telemetry::flush_log_buf();
     panic!("{}", msg);
 }
 
