@@ -248,9 +248,10 @@ pub struct SubmitVerifyInnerChecked {
 
 /// Merged submit verify data; the handler picks the right envelope above.
 /// Mirrors Go's `resp.SubmitVerifyData`.
+/// Go uses `omitempty` on all fields including the bool, so `false` is omitted.
 #[derive(Debug, Serialize)]
 pub struct SubmitVerifyData {
-    #[serde(rename = "scoreChecked")]
+    #[serde(rename = "scoreChecked", skip_serializing_if = "std::ops::Not::not")]
     pub score_checked: bool,
     #[serde(rename = "bindType",        skip_serializing_if = "Option::is_none")]
     pub bind_type:      Option<String>,

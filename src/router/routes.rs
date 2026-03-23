@@ -24,7 +24,7 @@ use axum::{
     Router, middleware,
     routing::{get, post},
 };
-use axum_prometheus::PrometheusMetricLayer;
+use prometheus::{TextEncoder, Encoder};
 use tower::ServiceBuilder;
 use tower_governor::{
     GovernorLayer,
@@ -36,7 +36,7 @@ use tower_http::{cors::CorsLayer, timeout::TimeoutLayer};
 
 pub use crate::app_state::AppState;
 use crate::handler;
-use crate::middleware::{RecoverLayer, behavior_logger};
+use crate::middleware::{RecoverLayer, behavior_logger, prometheus_metrics};
 use crate::router::swagger;
 
 // ── Custom key extractor: request path ────────────────────────────────────────
@@ -63,7 +63,6 @@ impl KeyExtractor for PathKeyExtractor {
 /// Mirrors Go's `RegisterHandlers(fiberApp, playerVerification, cfg)`.
 pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
     let port = state.config.port;
-    let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
 
     // ── Rate-limit configs ────────────────────────────────────────────────────
 
@@ -103,9 +102,15 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         )
         .route(
             "/metrics",
-            get(move || {
-                let h = metrics_handle.clone();
-                async move { h.render() }
+            get(|| async {
+                let encoder = TextEncoder::new();
+                let metric_families = prometheus::gather();
+                let mut buffer = Vec::new();
+                encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+                    buffer,
+                )
             }),
         );
 
@@ -152,7 +157,7 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         .nest("/tcg-ucs-fe", api_router)
         .layer(
             ServiceBuilder::new()
-                .layer(prometheus_layer)
+                .layer(middleware::from_fn(prometheus_metrics))
                 .layer(RecoverLayer)
                 .layer(CorsLayer::permissive())
                 .layer(middleware::from_fn(behavior_logger)),

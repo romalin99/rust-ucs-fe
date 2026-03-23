@@ -1,6 +1,8 @@
+pub mod field_id_uss_mapping;
 pub mod merchant_rule;
 pub mod validation_record;
 
+pub use field_id_uss_mapping::FieldIdUssMappingRepository;
 pub use merchant_rule::{
     MerchantRuleRepository, OracleConnectionManager, OraclePool, PoolConfig, build_pool, ping_pool,
 };

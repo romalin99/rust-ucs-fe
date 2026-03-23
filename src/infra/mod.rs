@@ -1,9 +1,9 @@
 /// Infrastructure dependency container.
 ///
 /// Mirrors Go's `internal/infra/manager.go`:
-///   `ComManager`  → [`AppInfra`]
-///   `ComClient`   → inner fields of [`AppInfra`]
-///   `ComModel`    → inner fields of [`AppInfra`]
+///   `ComManager`  -> [`AppInfra`]
+///   `ComClient`   -> inner fields of [`AppInfra`]
+///   `ComModel`    -> inner fields of [`AppInfra`]
 ///
 /// Holds every runtime resource (Oracle pool, Redis, HTTP clients,
 /// repositories) that services and handlers need.  The single
@@ -18,8 +18,8 @@ use redis::aio::ConnectionManager as RedisManager;
 use crate::client::{McsClient, UssClient, WpsClient};
 use crate::config::{AppConfig, OracleConnectInfo, RedisDbEntry};
 use crate::repository::{
-    MerchantRuleRepository, OraclePool, PoolConfig, ValidationRecordRepository, build_pool,
-    ping_pool,
+    FieldIdUssMappingRepository, MerchantRuleRepository, OraclePool, PoolConfig,
+    ValidationRecordRepository, build_pool, ping_pool,
 };
 
 // ── Redis multi-DB singleton ──────────────────────────────────────────────────
@@ -123,6 +123,7 @@ pub use crate::client::{
     McsClient as ComMcsClient, UssClient as ComUssClient, WpsClient as ComWpsClient,
 };
 pub use crate::repository::{
+    FieldIdUssMappingRepository as ComFieldIdUssMappingRepo,
     MerchantRuleRepository as ComMerchantRepo, OraclePool as ComOraclePool,
     ValidationRecordRepository as ComValidationRepo,
 };
@@ -163,16 +164,17 @@ pub struct AppInfra {
     pub merchant_repo: Arc<MerchantRuleRepository>,
     /// Oracle-backed validation record repository.
     pub validation_repo: Arc<ValidationRecordRepository>,
+    /// Oracle-backed field-id <-> USS mapping repository.
+    pub uss_mapping_repo: Arc<FieldIdUssMappingRepository>,
 }
 
 impl AppInfra {
     /// Construct every infrastructure resource in dependency order:
-    /// Oracle → Redis → HTTP clients → Repositories.
+    /// Oracle -> Redis -> HTTP clients -> Repositories.
     ///
     /// Mirrors Go's `NewComManager(odbCfg, ussCfg, mcsCfg, wpsCfg, rdsCfg)`.
     pub async fn new(cfg: &AppConfig, oracle_info: &OracleConnectInfo) -> anyhow::Result<Self> {
-        // ── Oracle ────────────────────────────────────────────────────────────
-        // ── Oracle pool (instant — no connections opened here) ────────────────
+        // ── Oracle pool (instant -- no connections opened here) ───────────────
         //
         // build_unchecked() returns immediately; connections are created lazily
         // on first query.  This mirrors Go's sql.Open() which is also instant.
@@ -189,7 +191,7 @@ impl AppInfra {
         );
         let pool_cfg = PoolConfig {
             max_size: cfg.oracle.max_open_conn,
-            min_idle: 0, // lazy — matches Go sql.Open
+            min_idle: 0, // lazy -- matches Go sql.Open
             max_lifetime_secs: cfg.oracle.max_life_time,
             max_idle_time_mins: cfg.oracle.max_idle_time,
             connection_timeout_secs: 30,
@@ -204,7 +206,7 @@ impl AppInfra {
             elapsed_us = t_oracle.elapsed().as_micros(),
             "Oracle pool struct created (no TCP yet)"
         );
-        // Blocking ping — mirrors Go's db.Ping() after sql.Open().
+        // Blocking ping -- mirrors Go's db.Ping() after sql.Open().
         // Awaited so the pool has a warm connection before the first real
         // query (field-config load), avoiding ~1 s connection-creation overhead.
         ping_pool(oracle_pool.clone()).await;
@@ -242,6 +244,7 @@ impl AppInfra {
         // ── Repositories ──────────────────────────────────────────────────────
         let merchant_repo = Arc::new(MerchantRuleRepository::new(oracle_pool.clone()));
         let validation_repo = Arc::new(ValidationRecordRepository::new(oracle_pool.clone()));
+        let uss_mapping_repo = Arc::new(FieldIdUssMappingRepository::new(oracle_pool.clone()));
 
         Ok(Self {
             oracle_pool,
@@ -251,6 +254,7 @@ impl AppInfra {
             wps,
             merchant_repo,
             validation_repo,
+            uss_mapping_repo,
         })
     }
 }

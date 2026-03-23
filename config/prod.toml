@@ -12,15 +12,15 @@ normal = 30
 long   = 60
 upload = 120
 
-[jobs.template_field_sync]
-interval = 21600
+[jobs.template_field_load]
+interval = 7200    # seconds (120 minutes)
 enabled  = true
 timeout  = 3600
 
-[jobs.field_configs_loading]
-interval = 21600
-enabled  = false
-timeout  = 3600
+[jobs.fieldid_ussid_mapping_load]
+interval = 14400  # seconds (240 minutes)
+enabled  = true
+timeout  = 360
 
 [oracle]
 user                  = ""

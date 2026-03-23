@@ -7,11 +7,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::JobConfig;
-use crate::repository::MerchantRuleRepository;
+use crate::repository::{FieldIdUssMappingRepository, MerchantRuleRepository};
 use crate::service::field_cache::do_load_field_configs;
+use crate::service::field_id_uss_mapping_cache::do_load_uss_mapping_configs;
 
 pub struct CommonCronJobs {
     stop_handles: Vec<tokio::sync::watch::Sender<bool>>,
+}
+
+/// Shared repo references passed into each cron job.
+struct CronRepos {
+    merchant_repo:    Arc<MerchantRuleRepository>,
+    uss_mapping_repo: Arc<FieldIdUssMappingRepository>,
 }
 
 impl CommonCronJobs {
@@ -19,8 +26,10 @@ impl CommonCronJobs {
     pub fn start(
         jobs: &HashMap<String, JobConfig>,
         merchant_repo: Arc<MerchantRuleRepository>,
+        uss_mapping_repo: Arc<FieldIdUssMappingRepository>,
     ) -> Self {
         let mut stop_handles = Vec::new();
+        let repos = Arc::new(CronRepos { merchant_repo, uss_mapping_repo });
 
         for (name, cfg) in jobs {
             if !cfg.enabled {
@@ -38,7 +47,7 @@ impl CommonCronJobs {
             let name = name.clone();
             let interval_secs = cfg.interval;
             let timeout_secs = cfg.timeout;
-            let repo = merchant_repo.clone();
+            let repos = repos.clone();
 
             tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
@@ -55,7 +64,7 @@ impl CommonCronJobs {
                             let start = std::time::Instant::now();
                             tracing::info!(job = %name, interval = interval_secs, "CRON job started");
 
-                            let job_future = execute_job(&name, &repo);
+                            let job_future = execute_job(&name, &repos);
                             let result = tokio::time::timeout(
                                 Duration::from_secs(timeout_secs),
                                 job_future,
@@ -91,11 +100,15 @@ impl CommonCronJobs {
     }
 }
 
-async fn execute_job(name: &str, repo: &Arc<MerchantRuleRepository>) -> anyhow::Result<()> {
+async fn execute_job(name: &str, repos: &CronRepos) -> anyhow::Result<()> {
     match name {
-        "template_field_sync" | "field_configs_loading" => {
+        "template_field_load" => {
             tracing::info!(job = name, "starting to sync template fields");
-            do_load_field_configs(repo).await?;
+            do_load_field_configs(&repos.merchant_repo).await?;
+        }
+        "fieldid_ussid_mapping_load" => {
+            tracing::info!(job = name, "starting to sync USS mapping configs");
+            do_load_uss_mapping_configs(&repos.uss_mapping_repo).await?;
         }
         other => anyhow::bail!("Unknown job: {}", other),
     }

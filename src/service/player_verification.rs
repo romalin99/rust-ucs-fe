@@ -17,6 +17,7 @@ use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig, Question, Qu
 use crate::model::validation_record::{QA, QaMap, ValidationRecord};
 use crate::repository::{MerchantRuleRepository, ValidationRecordRepository};
 use crate::service::field_cache::get_field_config;
+use crate::service::field_id_uss_mapping_cache::{build_field_id_uss_id_mapping_key, get_uss_mapping_config_sync};
 use crate::service::finance_history::{FINANCE_SETTERS, HISTORY_SETTERS, apply_field_setters};
 use crate::types::req::{SubmitVerifyRequest, VerifyDataItem};
 use crate::types::resp::{MerchantRuleResponse, SubmitVerifyData};
@@ -45,10 +46,12 @@ fn is_financial_history(field_id: &str) -> bool {
 // ── Redis rate-limit keys ─────────────────────────────────────────────────────
 
 // Key format mirrors Go exactly:
-//   ip_key  = "ucsfe:ql:ip:{merchantCode}@{customerName}:{customerIP}:{date}"
+//   ip_key  = "ucsfe:ql:ip:{customerIP}:{date}"
 //   acct_key = "ucsfe:ql:acct:{merchantCode}@{customerName}:{date}"
-fn ip_key(merchant: &str, customer: &str, ip: &str, date: &str) -> String {
-    format!("ucsfe:ql:ip:{}@{}:{}:{}", merchant, customer, ip, date)
+const QUESTION_LIST_REDIS_DB: i32 = 2;
+
+fn ip_key(ip: &str, date: &str) -> String {
+    format!("ucsfe:ql:ip:{}:{}", ip, date)
 }
 
 fn acct_key(merchant: &str, customer: &str, date: &str) -> String {
@@ -79,6 +82,16 @@ if v == 1 then
 end
 return v
 "#;
+
+/// Get a Redis ConnectionManager for rate limiting (DB 2).
+/// Falls back to creating a new connection from the multi-DB map.
+async fn get_rate_limit_redis() -> Result<redis::aio::ConnectionManager, AppError> {
+    let instance = crate::infra::get_db_instance(QUESTION_LIST_REDIS_DB)
+        .map_err(|e| AppError::Internal(e))?;
+    redis::aio::ConnectionManager::new(instance.client.as_ref().clone())
+        .await
+        .map_err(|e| AppError::RedisError(e))
+}
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -123,11 +136,13 @@ impl PlayerVerificationService {
         // Redis keys only depend on request params, not on the DB result,
         // so we can fire both at the same time.
         let today = today_key();
-        let ip_k  = ip_key(merchant_code, customer_name, customer_ip, &today);
+        let ip_k  = ip_key(customer_ip, &today);
         let ac_k  = acct_key(merchant_code, customer_name, &today);
 
-        let mut c1 = self.redis.clone();
-        let mut c2 = self.redis.clone();
+        // Use Redis DB 2 for rate limiting (mirrors Go's questionListRedisDB = 2).
+        let rate_limit_redis = get_rate_limit_redis().await?;
+        let mut c1 = rate_limit_redis.clone();
+        let mut c2 = rate_limit_redis.clone();
         let ip_k_r = ip_k.clone();
         let ac_k_r = ac_k.clone();
 
@@ -179,8 +194,8 @@ impl PlayerVerificationService {
         let full_customer_name = format!("{}@{}", merchant_code, customer_name);
         let expire_at = end_of_day_unix();
         let script = redis::Script::new(INCR_WITH_TTL_SCRIPT);
-        let mut incr_c1 = self.redis.clone();
-        let mut incr_c2 = self.redis.clone();
+        let mut incr_c1 = rate_limit_redis.clone();
+        let mut incr_c2 = rate_limit_redis.clone();
         let t = Instant::now();
 
         let (_, wps_result, uss_result) = tokio::join!(
@@ -432,11 +447,12 @@ impl PlayerVerificationService {
         acct_limit: i32,
     ) -> Result<(), AppError> {
         let today = today_key();
-        let ip_k = ip_key(merchant, customer, ip, &today);
+        let ip_k = ip_key(ip, &today);
         let ac_k = acct_key(merchant, customer, &today);
 
-        let mut c1 = self.redis.clone();
-        let mut c2 = self.redis.clone();
+        let rate_limit_redis = get_rate_limit_redis().await?;
+        let mut c1 = rate_limit_redis.clone();
+        let mut c2 = rate_limit_redis.clone();
 
         // Read both counters concurrently
         let ip_k_clone = ip_k.clone();
@@ -490,8 +506,8 @@ impl PlayerVerificationService {
         let expire_at = end_of_day_unix();
         let script = redis::Script::new(INCR_WITH_TTL_SCRIPT);
 
-        let mut incr_c1 = self.redis.clone();
-        let mut incr_c2 = self.redis.clone();
+        let mut incr_c1 = rate_limit_redis.clone();
+        let mut incr_c2 = rate_limit_redis.clone();
 
         tokio::join!(
             async {
@@ -664,37 +680,59 @@ fn accurate_judgment_score(
             None => continue,
         };
 
-        let submitted = &data_item.item.field_value;
+        // Field Id USS Id mapping: translate MCS FieldValue → USS_ID string.
+        // Mirrors Go's `GlobalUssMappingConfigs.Load(fieldUssIdCacheKey)`.
+        let raw_submitted = &data_item.item.field_value;
+        let submitted: String;
+        if let Some(uss_id) = get_uss_mapping_config_sync(field_id, raw_submitted) {
+            tracing::info!(
+                field_id = %field_id,
+                raw_value = %raw_submitted,
+                uss_id = %uss_id,
+                "field id uss id mapping cache hit"
+            );
+            submitted = uss_id;
+        } else {
+            submitted = raw_submitted.clone();
+        }
 
         let (score, is_correct);
         if data_item.bind {
             if submitted.is_empty() {
                 score = 0;
                 is_correct = false;
-                tracing::warn!(field_id = %field_id, "bind=true empty value");
+                tracing::warn!(field_id = %field_id, expected = %expected_value, "bind=true empty value");
             } else if submitted.eq_ignore_ascii_case(expected_value) {
                 score = question_cfg.score;
                 is_correct = true;
+                tracing::info!(
+                    field_id = %field_id, submitted = %submitted, expected = %expected_value, score,
+                    "bind=true matched"
+                );
             } else {
                 score = 0;
                 is_correct = false;
+                tracing::warn!(
+                    field_id = %field_id, submitted = %submitted, expected = %expected_value,
+                    "bind=true mismatched"
+                );
             }
-            tracing::warn!(
-                field_id = %field_id, submitted = %submitted, expected = %expected_value,
-                "bind=true mismatch"
-            );
         } else {
             if expected_value.is_empty() || expected_value == "-1" {
                 score = empty_score;
                 is_correct = true;
+                tracing::info!(
+                    field_id = %field_id, expected = %expected_value, empty_score,
+                    "bind=false matched"
+                );
             } else {
                 score = 0;
                 is_correct = false;
+                tracing::warn!(
+                    field_id = %field_id, expected = %expected_value,
+                    "bind=false mismatched"
+                );
             }
-            tracing::warn!(
-                field_id = %field_id, expected = %expected_value,
-                "bind=false expected"
-            );
         }
 
         qa_map.insert(

@@ -39,8 +39,9 @@ use crate::{
     config::{AppConfig, OracleConnectInfo, load_oracle_connect_info},
     infra::AppInfra,
     observability::FlightRecorder,
+    pkg::memstats,
     router::build_router,
-    service::{CommonCronJobs, InitLoadingData, PlayerVerificationService},
+    service::{CommonCronJobs, FieldIdUssMappingLoader, InitLoadingData, PlayerVerificationService},
 };
 
 // ── Application container ─────────────────────────────────────────────────────
@@ -48,12 +49,14 @@ use crate::{
 /// Holds all runtime components in dependency order.
 /// Mirrors Go's `application` struct in `cmd/api/main.go`.
 struct Application {
-    infra:           Arc<AppInfra>,
-    cron_jobs:       CommonCronJobs,
-    field_loader:    InitLoadingData,
-    flight_recorder: Option<FlightRecorder>,
-    router:          axum::Router,
-    cfg:             AppConfig,
+    infra:              Arc<AppInfra>,
+    cron_jobs:          CommonCronJobs,
+    field_loader:       InitLoadingData,
+    uss_mapping_loader: FieldIdUssMappingLoader,
+    flight_recorder:    Option<FlightRecorder>,
+    mem_stats_handle:   memstats::StopHandle,
+    router:             axum::Router,
+    cfg:                AppConfig,
 }
 
 impl Application {
@@ -87,13 +90,33 @@ impl Application {
         // ── Infrastructure (Oracle pool, Redis, HTTP clients, repos) ─────────
         let infra = Arc::new(AppInfra::new(&cfg, &oracle_info).await?);
 
+        // ── Redis multi-DB (DB 2 for rate limiting) ─────────────────────────
+        // Mirrors Go's `rdsCfg.InitDBSV2()`.
+        crate::infra::init_redis_multi_db(
+            &cfg.redis.addr,
+            &cfg.redis.password,
+            &cfg.redis.dbs,
+        );
+
         // ── Field-config loader (initial load + 30-min periodic refresh) ─────
         // Mirrors Go's `service.NewInitLoadingData(com)`.
         let field_loader = InitLoadingData::start(infra.merchant_repo.clone());
 
+        // ── USS mapping loader (initial load + 30-min periodic refresh) ──────
+        // Mirrors Go's `service.NewFieldIdUssMappingLoader(com)`.
+        let uss_mapping_loader = FieldIdUssMappingLoader::start(infra.uss_mapping_repo.clone());
+
         // ── Cron scheduler ────────────────────────────────────────────────────
         // Mirrors Go's `service.NewCommonCronJobs(cfg, com)`.
-        let cron_jobs = CommonCronJobs::start(&cfg.jobs, infra.merchant_repo.clone());
+        let cron_jobs = CommonCronJobs::start(
+            &cfg.jobs,
+            infra.merchant_repo.clone(),
+            infra.uss_mapping_repo.clone(),
+        );
+
+        // ── Memstats background task ─────────────────────────────────────────
+        // Mirrors Go's `gos.GoSafe(func() { memstatus.MemStats(memStatsCtx) })`.
+        let mem_stats_handle = memstats::start_mem_stats();
 
         // ── Domain service ────────────────────────────────────────────────────
         // Mirrors Go's `service.NewPlayerVerificationService(cfg, com)`.
@@ -110,7 +133,7 @@ impl Application {
         let state  = AppState::new(Arc::new(cfg.clone()), Arc::new(player_svc));
         let router = build_router(state, cfg.timeouts.quick);
 
-        Ok(Self { infra, cron_jobs, field_loader, flight_recorder, router, cfg })
+        Ok(Self { infra, cron_jobs, field_loader, uss_mapping_loader, flight_recorder, mem_stats_handle, router, cfg })
     }
 
     /// Graceful shutdown in reverse dependency order.
@@ -124,10 +147,16 @@ impl Application {
         self.field_loader.stop();
         info!("field config loader stopped");
 
+        self.uss_mapping_loader.stop();
+        info!("USS mapping loader stopped");
+
         if let Some(fr) = self.flight_recorder {
             fr.stop();
             info!("flight recorder stopped");
         }
+
+        self.mem_stats_handle.stop();
+        info!("memstats task stopped");
 
         // AppInfra connections close when the last Arc drops.
         drop(self.infra);
