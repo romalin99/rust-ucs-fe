@@ -584,6 +584,8 @@ impl PlayerVerificationService {
             });
         }
 
+        result.sort_by(|a, b| a.field_id.cmp(&b.field_id));
+
         tracing::info!(
             merchant_code,
             valid_questions = result.len(),
