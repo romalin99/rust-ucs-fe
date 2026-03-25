@@ -19,11 +19,38 @@ use crate::model::template::{DropdownItem, TemplateField};
 
 pub type OraclePool = r2d2::Pool<OracleConnectionManager>;
 
+// ── Oracle connection tuning constants ────────────────────────────────────────
+//
+// Mirrors Go's godror `appendedOptions`:
+//   stmtCacheSize=64 enableStmtCache=true fetchArraySize=110
+//   prefetch_count=100 enableClientResultCache=true
+//
+// These are applied per-connection (stmt cache, LOB prefetch) or per-statement
+// (prefetch_rows, fetch_array_size).
+
+/// `stmtCacheSize=64` — number of parsed statement handles cached per session.
+pub const STMT_CACHE_SIZE: u32 = 64;
+
+/// `prefetch_count=100` — rows prefetched by OCI per round-trip.
+pub const DEFAULT_PREFETCH_ROWS: u32 = 100;
+
+/// `fetchArraySize=110` — internal OCI fetch buffer row count.
+pub const DEFAULT_FETCH_ARRAY_SIZE: u32 = 110;
+
+/// LOB data (≤ 128 KB) is prefetched alongside LOB locators, eliminating extra
+/// round-trips for CLOB columns (QUESTIONS, TEMPLATE_FIELDS).
+/// Only effective when `lob_locator()` is used on the statement builder.
+const LOB_PREFETCH_BYTES: u32 = 128 * 1024;
+
 // ── Connection manager ────────────────────────────────────────────────────────
 
 /// r2d2 connection manager for rust-oracle.
 ///
-/// Mirrors Go's `pkg/oracle/Config` + `godror` driver registration.
+/// Every new connection is configured with:
+/// - Statement cache (`STMT_CACHE_SIZE = 64`)
+/// - LOB prefetch (`LOB_PREFETCH_BYTES = 128 KB`)
+///
+/// Mirrors Go's `pkg/oracle/Config` + `godror` driver with `appendedOptions`.
 pub struct OracleConnectionManager {
     user: String,
     password: String,
@@ -45,13 +72,15 @@ impl r2d2::ManageConnection for OracleConnectionManager {
     type Error = oracle::Error;
 
     fn connect(&self) -> std::result::Result<oracle::Connection, oracle::Error> {
-        let mut conn = oracle::Connection::connect(&self.user, &self.password, &self.connect_string)?;
-        // Prefetch LOB data inline with row fetches — eliminates extra round-trips
-        // for CLOB columns (QUESTIONS, TEMPLATE_FIELDS).
-        // Default is 0 (no prefetch → 1 extra round-trip per CLOB per row).
-        // 128 KB covers typical QUESTIONS (~10-50 KB) and TEMPLATE_FIELDS (~2-8 KB).
-        conn.set_oci_attr::<oracle::oci_attr::DefaultLobPrefetchSize>(&(128 * 1024))
+        let mut conn = oracle::Connector::new(&self.user, &self.password, &self.connect_string)
+            .stmt_cache_size(STMT_CACHE_SIZE)
+            .connect()?;
+
+        // OCI_ATTR_DEFAULT_LOBPREFETCH_SIZE — prefetch LOB data with locators.
+        // Eliminates extra round-trips when `lob_locator()` is used on statements.
+        conn.set_oci_attr::<oracle::oci_attr::DefaultLobPrefetchSize>(&LOB_PREFETCH_BYTES)
             .unwrap_or_else(|e| tracing::warn!(error = %e, "failed to set DefaultLobPrefetchSize"));
+
         Ok(conn)
     }
 
@@ -64,58 +93,39 @@ impl r2d2::ManageConnection for OracleConnectionManager {
     }
 }
 
-/// Pool configuration mirroring Go's `pkg/oracle/Config`.
-pub struct PoolConfig {
-    /// Maximum number of open connections (`max_open_conn`).
-    pub max_size: u32,
-    /// Minimum idle connections kept alive after initialisation.
-    ///
-    /// **Set to 0 for lazy (on-demand) connection creation**, which matches
-    /// Go's `database/sql` behaviour: `sql.Open` creates 0 connections; they
-    /// are established only when the first query runs.
-    ///
-    /// r2d2's default is `None` which is silently treated as `max_size`,
-    /// causing the full pool (e.g. 100 connections) to be created at startup
-    /// and blocking the process for several seconds.
-    pub min_idle: u32,
-    /// Max time a connection may be reused (`max_life_time`, seconds).
-    /// Mirrors Go's `db.SetConnMaxLifetime`.
-    pub max_lifetime_secs: u64,
-    /// Max time a connection may sit idle before being closed (`max_idle_time`, minutes).
-    /// Mirrors Go's `db.SetConnMaxIdleTime`.
-    pub max_idle_time_mins: u64,
-    /// Timeout waiting for a connection from a fully-occupied pool (seconds).
-    pub connection_timeout_secs: u64,
-}
+// ── Pool configuration ───────────────────────────────────────────────────────
 
-impl Default for PoolConfig {
-    fn default() -> Self {
-        Self {
-            max_size:               100,
-            min_idle:               0,    // lazy — matches Go sql.Open
-            max_lifetime_secs:      30,
-            max_idle_time_mins:     30,
-            connection_timeout_secs: 30,
-        }
-    }
+/// Pool configuration mirroring Go's `pkg/oracle/Config` + `appendedOptions`.
+///
+/// Go uses two layers:
+///   1. `database/sql` pool: `SetMaxOpenConns`, `SetMaxIdleConns`, etc.
+///   2. godror OCI session pool: `poolMinSessions`, `poolMaxSessions`.
+///
+/// In Rust there is only the r2d2 pool, so we map both layers into a single
+/// `PoolConfig`.
+pub struct PoolConfig {
+    /// Maximum connections in the pool.
+    /// Maps to Go's `poolMaxSessions` / `max_open_conn`.
+    pub max_size: u32,
+    /// Minimum idle connections maintained by r2d2's background thread.
+    /// Maps to Go's `poolMinSessions`.
+    /// r2d2 creates them lazily in the background after `build_unchecked`.
+    pub min_idle: u32,
+    /// Max time a connection may be reused (seconds).
+    /// Maps to Go's `db.SetConnMaxLifetime`.
+    pub max_lifetime_secs: u64,
+    /// Max time a connection may sit idle before being closed (minutes).
+    /// Maps to Go's `db.SetConnMaxIdleTime`.
+    pub max_idle_time_mins: u64,
+    /// Timeout waiting for a free connection (seconds).
+    pub connection_timeout_secs: u64,
 }
 
 /// Build an r2d2 connection pool for rust-oracle.
 ///
-/// # Why `build_unchecked`
-///
-/// `r2d2::Pool::build()` internally calls `wait_for_initialization()`, which
-/// blocks until `min_idle` connections have been established — even when
-/// `min_idle = Some(0)` this still acquires a mutex and may yield to the
-/// background replenishment thread.
-///
-/// `build_unchecked()` skips all of that: it constructs the pool struct,
-/// starts the background management thread, and returns **immediately** with
-/// zero blocking I/O.  This mirrors Go's `sql.Open()` which is also
-/// non-blocking; actual connections are opened lazily on first use.
-///
-/// Connectivity is validated separately via [`ping_pool`] in a background
-/// task (mirrors Go's `db.Ping()` after `sql.Open`).
+/// Uses `build_unchecked()` so the call returns instantly with zero I/O.
+/// r2d2's background thread will create `min_idle` connections asynchronously.
+/// Connectivity is validated via [`ping_pool`] after construction.
 pub fn build_pool(
     user: &str,
     password: &str,
@@ -129,36 +139,52 @@ pub fn build_pool(
         .max_lifetime(Some(Duration::from_secs(cfg.max_lifetime_secs)))
         .idle_timeout(Some(Duration::from_secs(cfg.max_idle_time_mins * 60)))
         .connection_timeout(Duration::from_secs(cfg.connection_timeout_secs))
-        // build_unchecked: no blocking wait — pool is ready instantly.
-        // Connections are opened on the first query (lazy).
         .build_unchecked(manager)
 }
 
 /// Validate Oracle connectivity and warm the connection pool.
 ///
-/// Mirrors Go's blocking `db.Ping()` call after `sql.Open`.
-/// Awaiting this ensures the pool has a warm connection before the
-/// first real query (e.g. `find_all_as_map`), avoiding ~1 s of
-/// connection-creation overhead on the critical path.
-pub async fn ping_pool(pool: Arc<OraclePool>) {
-    let result = tokio::task::spawn_blocking(move || {
-        let start = std::time::Instant::now();
-        match pool.get() {
-            Ok(conn) => match conn.ping() {
-                Ok(()) => tracing::info!(
-                    elapsed_ms = start.elapsed().as_millis(),
-                    "✅ Oracle connection pool: ping OK"
-                ),
-                Err(e) => tracing::warn!(error = %e, "Oracle ping failed"),
-            },
-            Err(e) => tracing::warn!(error = %e, "Oracle pool: could not get connection for ping"),
-        }
-    })
-    .await;
+/// Creates `warm_count` connections in parallel so concurrent startup tasks
+/// (field-config loader, USS-mapping loader, etc.) each get a pre-warmed
+/// connection.
+///
+/// Mirrors Go's `db.Ping()` + `poolMinSessions` pre-creation.
+pub async fn ping_pool(pool: Arc<OraclePool>, warm_count: usize) {
+    let t0 = std::time::Instant::now();
+    let handles: Vec<_> = (0..warm_count)
+        .map(|i| {
+            let pool = pool.clone();
+            tokio::task::spawn_blocking(move || {
+                let start = std::time::Instant::now();
+                match pool.get() {
+                    Ok(conn) => match conn.ping() {
+                        Ok(()) => tracing::info!(
+                            i,
+                            elapsed_ms = start.elapsed().as_millis(),
+                            "Oracle pool: connection warmed"
+                        ),
+                        Err(e) => tracing::warn!(i, error = %e, "Oracle ping failed"),
+                    },
+                    Err(e) => tracing::warn!(
+                        i,
+                        error = %e,
+                        "Oracle pool: could not get connection for ping"
+                    ),
+                }
+            })
+        })
+        .collect();
 
-    if let Err(e) = result {
-        tracing::warn!(error = %e, "ping_pool: spawn_blocking panicked");
+    for h in handles {
+        if let Err(e) = h.await {
+            tracing::warn!(error = %e, "ping_pool: spawn_blocking panicked");
+        }
     }
+    tracing::info!(
+        warm_count,
+        elapsed_ms = t0.elapsed().as_millis(),
+        "✅ Oracle connection pool warmed"
+    );
 }
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -176,14 +202,10 @@ pub struct MerchantRuleRepository {
 }
 
 impl MerchantRuleRepository {
-    pub fn new(pool: Arc<OraclePool>) -> Self {
-        Self::with_timeout(pool, 15)
-    }
-
-    pub fn with_timeout(pool: Arc<OraclePool>, read_timeout_secs: u64) -> Self {
+    pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64) -> Self {
         Self {
             pool,
-            read_timeout: Duration::from_secs(read_timeout_secs),
+            read_timeout: Duration::from_secs(if read_timeout_secs > 0 { read_timeout_secs } else { 15 }),
         }
     }
 
@@ -313,6 +335,10 @@ impl MerchantRuleRepository {
     /// Only fields with `fieldAttribute == "DD"` (dropdown) are included —
     /// mirrors Go's `FindAllTemplateFieldsAsMap` filter logic.
     ///
+    /// Strategy: try Oracle 12.2 `JSON_ARRAYAGG` first (collapses N CLOB
+    /// round-trips into 1). If the DB doesn't support it or the JSON is
+    /// malformed, transparently fall back to row-by-row fetching.
+    ///
     /// Returns: `HashMap<merchantCode, HashMap<fieldId, Vec<DropdownItem>>>`
     pub async fn find_all_as_map(
         &self,
@@ -325,49 +351,62 @@ impl MerchantRuleRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let pool_get_ms = t0.elapsed().as_millis();
 
-            // Read only the two columns we need — avoid fetching heavy CLOBs.
-            let sql = "SELECT MERCHANT_CODE, TEMPLATE_FIELDS \
-                       FROM TCG_UCS.MERCHANT_RULE \
-                       WHERE TEMPLATE_FIELDS IS NOT NULL";
+            match Self::find_all_as_map_aggregated(&conn, pool_get_ms, t0) {
+                Ok(result) => Ok(result),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "JSON_ARRAYAGG path failed — falling back to row-by-row"
+                    );
+                    Self::find_all_as_map_rowbyrow(&conn, pool_get_ms, t0)
+                }
+            }
+        });
 
-            let mut stmt = conn
-                .statement(sql)
-                .prefetch_rows(100)
-                .fetch_array_size(100)
-                .build()
-                .context("find_all_as_map prepare")?;
-            let rows = stmt
-                .query(&[])
-                .context("find_all_as_map query")?;
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("find_all_as_map timed out after {:?}", timeout))?
+            .context("spawn_blocking panicked")?
+    }
 
-            let query_ms = t0.elapsed().as_millis() - pool_get_ms;
-            let mut result: HashMap<String, HashMap<String, Vec<DropdownItem>>> = HashMap::new();
+    /// Fast path: aggregate all TEMPLATE_FIELDS into one JSON CLOB server-side.
+    fn find_all_as_map_aggregated(
+        conn: &oracle::Connection,
+        pool_get_ms: u128,
+        t0: std::time::Instant,
+    ) -> Result<HashMap<String, HashMap<String, Vec<DropdownItem>>>> {
+        let sql = "SELECT JSON_ARRAYAGG(\
+                       JSON_OBJECT(\
+                           KEY 'mc' VALUE MERCHANT_CODE, \
+                           KEY 'tf' VALUE TEMPLATE_FIELDS FORMAT JSON \
+                           ABSENT ON NULL\
+                       ) \
+                       RETURNING CLOB\
+                   ) \
+                   FROM TCG_UCS.MERCHANT_RULE \
+                   WHERE TEMPLATE_FIELDS IS NOT NULL";
 
-            for row_result in rows {
-                let row = row_result.context("find_all_as_map row read")?;
-                let merchant_code: String        = row.get(0).context("MERCHANT_CODE")?;
-                let tf_json:       Option<String> = row.get(1).unwrap_or_default();
+        let row = conn.query_row(sql, &[])
+            .context("JSON_ARRAYAGG query")?;
 
-                let json = match tf_json {
-                    Some(j) if !j.is_empty() => j,
-                    _ => continue,
-                };
+        let agg_json: Option<String> = row.get(0).unwrap_or_default();
+        let query_ms = t0.elapsed().as_millis() - pool_get_ms;
 
-                let fields: Vec<TemplateField> = match serde_json::from_str(&json) {
-                    Ok(f)  => f,
-                    Err(e) => {
-                        tracing::warn!(
-                            merchant_code = %merchant_code,
-                            error         = %e,
-                            "Failed to parse TEMPLATE_FIELDS JSON — skipping"
-                        );
-                        continue;
-                    }
-                };
+        let mut result: HashMap<String, HashMap<String, Vec<DropdownItem>>> = HashMap::new();
 
+        if let Some(ref json_str) = agg_json {
+            #[derive(serde::Deserialize)]
+            struct AggEntry {
+                mc: String,
+                tf: Vec<TemplateField>,
+            }
+
+            let entries: Vec<AggEntry> = serde_json::from_str(json_str)
+                .context("parse aggregated JSON")?;
+
+            for entry in entries {
                 let mut field_map: HashMap<String, Vec<DropdownItem>> = HashMap::new();
-                for f in fields {
-                    // Only include dropdown-type fields (Go: field.FieldAttribute == "DD").
+                for f in entry.tf {
                     if f.field_attribute == "DD"
                         && !f.field_id.is_empty()
                         && !f.dropdown_list.is_empty()
@@ -375,28 +414,93 @@ impl MerchantRuleRepository {
                         field_map.insert(f.field_id, f.dropdown_list);
                     }
                 }
-
                 if !field_map.is_empty() {
-                    result.insert(merchant_code, field_map);
+                    result.insert(entry.mc, field_map);
                 }
             }
+        }
 
-            let iterate_ms = t0.elapsed().as_millis() - pool_get_ms - query_ms;
-            tracing::info!(
-                total_merchants = result.len(),
-                pool_get_ms,
-                query_ms,
-                iterate_ms,
-                total_ms = t0.elapsed().as_millis(),
-                "find_all_as_map: merchant field-config map loaded"
-            );
-            Ok(result)
-        });
+        let parse_ms = t0.elapsed().as_millis() - pool_get_ms - query_ms;
+        tracing::info!(
+            total_merchants = result.len(),
+            pool_get_ms,
+            query_ms,
+            parse_ms,
+            total_ms = t0.elapsed().as_millis(),
+            "find_all_as_map: loaded via JSON_ARRAYAGG"
+        );
+        Ok(result)
+    }
 
-        tokio::time::timeout(timeout, blocking)
-            .await
-            .map_err(|_| anyhow!("find_all_as_map timed out after {:?}", timeout))?
-            .context("spawn_blocking panicked")?
+    /// Slow path: fetch rows one-by-one (works on all Oracle versions).
+    fn find_all_as_map_rowbyrow(
+        conn: &oracle::Connection,
+        pool_get_ms: u128,
+        t0: std::time::Instant,
+    ) -> Result<HashMap<String, HashMap<String, Vec<DropdownItem>>>> {
+        let sql = "SELECT MERCHANT_CODE, TEMPLATE_FIELDS \
+                   FROM TCG_UCS.MERCHANT_RULE \
+                   WHERE TEMPLATE_FIELDS IS NOT NULL";
+
+        let mut stmt = conn
+            .statement(sql)
+            .prefetch_rows(DEFAULT_PREFETCH_ROWS)
+            .fetch_array_size(DEFAULT_FETCH_ARRAY_SIZE)
+            .build()
+            .context("find_all_as_map rowbyrow prepare")?;
+        let rows = stmt
+            .query(&[])
+            .context("find_all_as_map rowbyrow query")?;
+
+        let query_ms = t0.elapsed().as_millis() - pool_get_ms;
+        let mut result: HashMap<String, HashMap<String, Vec<DropdownItem>>> = HashMap::new();
+
+        for row_result in rows {
+            let row = row_result.context("row read")?;
+            let merchant_code: String = row.get(0).context("MERCHANT_CODE")?;
+            let tf_json: Option<String> = row.get(1).unwrap_or_default();
+
+            let json = match tf_json {
+                Some(j) if !j.is_empty() => j,
+                _ => continue,
+            };
+
+            let fields: Vec<TemplateField> = match serde_json::from_str(&json) {
+                Ok(f)  => f,
+                Err(e) => {
+                    tracing::warn!(
+                        merchant_code = %merchant_code,
+                        error         = %e,
+                        "Failed to parse TEMPLATE_FIELDS JSON — skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let mut field_map: HashMap<String, Vec<DropdownItem>> = HashMap::new();
+            for f in fields {
+                if f.field_attribute == "DD"
+                    && !f.field_id.is_empty()
+                    && !f.dropdown_list.is_empty()
+                {
+                    field_map.insert(f.field_id, f.dropdown_list);
+                }
+            }
+            if !field_map.is_empty() {
+                result.insert(merchant_code, field_map);
+            }
+        }
+
+        let iterate_ms = t0.elapsed().as_millis() - pool_get_ms - query_ms;
+        tracing::info!(
+            total_merchants = result.len(),
+            pool_get_ms,
+            query_ms,
+            iterate_ms,
+            total_ms = t0.elapsed().as_millis(),
+            "find_all_as_map: loaded via row-by-row fallback"
+        );
+        Ok(result)
     }
 
     /// Update `TEMPLATE_FIELDS` for a merchant.
@@ -498,8 +602,13 @@ impl MerchantRuleRepository {
 
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
-            let rows = conn.query("SELECT MERCHANT_CODE FROM TCG_UCS.MERCHANT_RULE", &[])
-                .context("GetAllMerchantCodes query")?;
+            let mut stmt = conn
+                .statement("SELECT MERCHANT_CODE FROM TCG_UCS.MERCHANT_RULE")
+                .prefetch_rows(DEFAULT_PREFETCH_ROWS)
+                .fetch_array_size(DEFAULT_FETCH_ARRAY_SIZE)
+                .build()
+                .context("GetAllMerchantCodes prepare")?;
+            let rows = stmt.query(&[]).context("GetAllMerchantCodes query")?;
             let mut out = Vec::new();
             for row_result in rows {
                 let row:  oracle::Row = row_result.context("row")?;
@@ -760,7 +869,13 @@ impl MerchantRuleRepository {
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
                 params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
-            let rows = conn.query(&sql, param_refs.as_slice())
+            let mut stmt = conn
+                .statement(&sql)
+                .prefetch_rows(DEFAULT_PREFETCH_ROWS)
+                .fetch_array_size(DEFAULT_FETCH_ARRAY_SIZE)
+                .build()
+                .context("FindList prepare")?;
+            let rows = stmt.query(param_refs.as_slice())
                 .context("FindList query")?;
 
             let mut result = Vec::new();

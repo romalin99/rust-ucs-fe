@@ -59,11 +59,11 @@ pub struct ValidationRecordRepository {
 }
 
 impl ValidationRecordRepository {
-    pub fn new(pool: Arc<OraclePool>) -> Self {
+    pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64, write_timeout_secs: u64) -> Self {
         Self {
             pool,
-            read_timeout:  Duration::from_secs(15),
-            write_timeout: Duration::from_secs(10),
+            read_timeout:  Duration::from_secs(if read_timeout_secs > 0 { read_timeout_secs } else { 15 }),
+            write_timeout: Duration::from_secs(if write_timeout_secs > 0 { write_timeout_secs } else { 15 }),
         }
     }
 
@@ -265,7 +265,10 @@ impl ValidationRecordRepository {
                         WHERE CUSTOMER_ID = :1 \
                         ORDER BY CREATED_AT DESC";
 
-            let rows = conn.query(sql, &[&customer_id]).context("FindListByCustomerId query")?;
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build().context("FindListByCustomerId prepare")?;
+            let rows = stmt.query(&[&customer_id]).context("FindListByCustomerId query")?;
             let mut out = Vec::new();
             for r in rows { out.push(Self::map_row(r.context("row read")?)?); }
             Ok(out)
@@ -293,7 +296,10 @@ impl ValidationRecordRepository {
                         WHERE MERCHANT_CODE = :1 \
                         ORDER BY CREATED_AT DESC";
 
-            let rows = conn.query(sql, &[&mc]).context("FindListByMerchantCode query")?;
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build().context("FindListByMerchantCode prepare")?;
+            let rows = stmt.query(&[&mc]).context("FindListByMerchantCode query")?;
             let mut out = Vec::new();
             for r in rows { out.push(Self::map_row(r.context("row read")?)?); }
             Ok(out)
@@ -325,7 +331,10 @@ impl ValidationRecordRepository {
                         WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2 \
                         ORDER BY CREATED_AT DESC";
 
-            let rows = conn.query(sql, &[&customer_id, &mc])
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build().context("FindListByCustomerAndMerchant prepare")?;
+            let rows = stmt.query(&[&customer_id, &mc])
                 .context("FindListByCustomerAndMerchant query")?;
             let mut out = Vec::new();
             for r in rows { out.push(Self::map_row(r.context("row read")?)?); }
@@ -354,7 +363,10 @@ impl ValidationRecordRepository {
                         WHERE IP = :1 \
                         ORDER BY CREATED_AT DESC";
 
-            let rows = conn.query(sql, &[&ip_str]).context("FindListByIp query")?;
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build().context("FindListByIp prepare")?;
+            let rows = stmt.query(&[&ip_str]).context("FindListByIp query")?;
             let mut out = Vec::new();
             for r in rows { out.push(Self::map_row(r.context("row read")?)?); }
             Ok(out)
@@ -533,7 +545,10 @@ impl ValidationRecordRepository {
                        GROUP BY TRUNC(CREATED_AT, 'MI') \
                        ORDER BY TX_MINUTE ASC";
 
-            let rows = conn.query(sql, &[&start_str, &end_str])
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(500).fetch_array_size(500) // large: minutes-per-day can return 1440 rows
+                .build().context("GetCountByMinute prepare")?;
+            let rows = stmt.query(&[&start_str, &end_str])
                 .context("GetCountByMinute query")?;
 
             let mut count_map: std::collections::HashMap<chrono::NaiveDateTime, i64> =
@@ -649,7 +664,10 @@ impl ValidationRecordRepository {
                          AND CREATED_AT <  TO_TIMESTAMP(:2, 'YYYY-MM-DD HH24:MI:SS') \
                        ORDER BY CREATED_AT ASC";
 
-            let rows = conn.query(sql, &[&start_str, &end_str])
+            let mut stmt = conn.statement(sql)
+                .prefetch_rows(500).fetch_array_size(500) // large: streaming potentially many rows
+                .build().context("StreamByTimeRange prepare")?;
+            let rows = stmt.query(&[&start_str, &end_str])
                 .context("StreamByTimeRange query")?;
 
             for row_result in rows {
@@ -703,7 +721,10 @@ impl ValidationRecordRepository {
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
                 params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
-            let rows = conn.query(&sql, param_refs.as_slice())
+            let mut stmt = conn.statement(&sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build().context("FindListByExpression prepare")?;
+            let rows = stmt.query(param_refs.as_slice())
                 .context("FindListByExpression query")?;
 
             let mut result = Vec::new();

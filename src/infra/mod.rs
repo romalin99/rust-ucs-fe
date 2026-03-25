@@ -180,20 +180,34 @@ impl AppInfra {
         // on first query.  This mirrors Go's sql.Open() which is also instant.
         // A background ping validates connectivity without blocking startup.
         let t_oracle = std::time::Instant::now();
+
+        // Pool sizing: use max_open_conn for pool capacity, pool_min for
+        // minimum idle connections maintained by r2d2's background thread.
+        // Mirrors Go's poolMaxSessions / poolMinSessions.
+        let pool_min = if cfg.oracle.pool_min > 0 {
+            cfg.oracle.pool_min
+        } else {
+            // Sensible default when pool_min is not set: enough for concurrent
+            // startup loaders (field-config, USS-mapping, cron) + headroom.
+            4
+        };
         tracing::info!(
             user             = %oracle_info.user,
             conn_string      = %oracle_info.connect_string,
-            max_open_conn    = cfg.oracle.max_open_conn,
-            max_idle_conn    = cfg.oracle.max_idle_conn,
+            max_size         = cfg.oracle.max_open_conn,
+            min_idle         = pool_min,
             max_life_time_s  = cfg.oracle.max_life_time,
             max_idle_time_m  = cfg.oracle.max_idle_time,
-            "Building Oracle connection pool (lazy/unchecked)"
+            stmt_cache_size  = crate::repository::STMT_CACHE_SIZE,
+            prefetch_rows    = crate::repository::DEFAULT_PREFETCH_ROWS,
+            fetch_array_size = crate::repository::DEFAULT_FETCH_ARRAY_SIZE,
+            "Building Oracle connection pool"
         );
         let pool_cfg = PoolConfig {
-            max_size: cfg.oracle.max_open_conn,
-            min_idle: 0, // lazy -- matches Go sql.Open
-            max_lifetime_secs: cfg.oracle.max_life_time,
-            max_idle_time_mins: cfg.oracle.max_idle_time,
+            max_size:               cfg.oracle.max_open_conn,
+            min_idle:               pool_min,
+            max_lifetime_secs:      cfg.oracle.max_life_time,
+            max_idle_time_mins:     cfg.oracle.max_idle_time,
             connection_timeout_secs: 30,
         };
         let oracle_pool = Arc::new(build_pool(
@@ -206,10 +220,10 @@ impl AppInfra {
             elapsed_us = t_oracle.elapsed().as_micros(),
             "Oracle pool struct created (no TCP yet)"
         );
-        // Blocking ping -- mirrors Go's db.Ping() after sql.Open().
-        // Awaited so the pool has a warm connection before the first real
-        // query (field-config load), avoiding ~1 s connection-creation overhead.
-        ping_pool(oracle_pool.clone()).await;
+        // Warm up connections in parallel so concurrent startup loaders each
+        // get a pre-warmed connection.  Cap at 8 to avoid slow startup.
+        let warm_count = (pool_min as usize).min(8).max(2);
+        ping_pool(oracle_pool.clone(), warm_count).await;
 
         // ── Redis ─────────────────────────────────────────────────────────────
         tracing::info!("Connecting to Redis");
@@ -241,10 +255,20 @@ impl AppInfra {
         let mcs = Arc::new(McsClient::new(&cfg.mcs_service));
         let wps = Arc::new(WpsClient::new(&cfg.wps_service));
 
-        // ── Repositories ──────────────────────────────────────────────────────
-        let merchant_repo = Arc::new(MerchantRuleRepository::new(oracle_pool.clone()));
-        let validation_repo = Arc::new(ValidationRecordRepository::new(oracle_pool.clone()));
-        let uss_mapping_repo = Arc::new(FieldIdUssMappingRepository::new(oracle_pool.clone()));
+        // ── Repositories (all share the single oracle_pool) ─────────────────
+        let merchant_repo = Arc::new(MerchantRuleRepository::new(
+            oracle_pool.clone(),
+            cfg.oracle.read_timeout,
+        ));
+        let validation_repo = Arc::new(ValidationRecordRepository::new(
+            oracle_pool.clone(),
+            cfg.oracle.read_timeout,
+            cfg.oracle.write_timeout,
+        ));
+        let uss_mapping_repo = Arc::new(FieldIdUssMappingRepository::new(
+            oracle_pool.clone(),
+            cfg.oracle.read_timeout,
+        ));
 
         Ok(Self {
             oracle_pool,

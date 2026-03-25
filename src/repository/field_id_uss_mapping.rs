@@ -19,10 +19,10 @@ pub struct FieldIdUssMappingRepository {
 }
 
 impl FieldIdUssMappingRepository {
-    pub fn new(pool: Arc<OraclePool>) -> Self {
+    pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64) -> Self {
         Self {
             pool,
-            read_timeout: Duration::from_secs(15),
+            read_timeout: Duration::from_secs(if read_timeout_secs > 0 { read_timeout_secs } else { 15 }),
         }
     }
 
@@ -42,8 +42,14 @@ impl FieldIdUssMappingRepository {
                 COLUMNS,
             );
 
-            let rows = conn
-                .query(&sql, &[])
+            let mut stmt = conn
+                .statement(&sql)
+                .prefetch_rows(super::DEFAULT_PREFETCH_ROWS)
+                .fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
+                .build()
+                .context("find_all_mappings prepare")?;
+            let rows = stmt
+                .query(&[])
                 .context("query FIELD_ID_USS_MAPPING")?;
 
             let mut list = Vec::new();
