@@ -294,65 +294,71 @@ impl PlayerVerificationService {
     ) -> Result<SubmitVerifyData, AppError> {
         let customer_name = format!("{}@{}", merchant_code, req_body.customer_name);
 
-        // 1. Fetch customer from USS
-        let t = Instant::now();
-        let customer = self
-            .uss
-            .get_customer(&customer_name, false)
-            .await
-            .map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
-        tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomer");
+        // ── Phase 1: Fire customer + token + rule_config in parallel ──────
+        //
+        // - get_customer needs customer_name (from input)
+        // - generate_token needs customer_name + merchant_code (from input)
+        // - get_rule_config needs merchant_code (from input)
+        // None depend on each other — all three can start immediately.
+        let t_phase1 = Instant::now();
 
+        let (cust_result, token_result, rule_result) = tokio::join!(
+            async {
+                let t = Instant::now();
+                let r = self.uss.get_customer(&customer_name, false).await;
+                tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomer");
+                r
+            },
+            async {
+                let t = Instant::now();
+                let r = self.uss.generate_password_reset_token(&req_body.customer_name, merchant_code).await;
+                tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GeneratePasswordResetToken");
+                r
+            },
+            async {
+                let t = Instant::now();
+                let r = self.merchant_repo.get_rule_config(merchant_code).await;
+                tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[Oracle] GetRuleConfig");
+                r
+            },
+        );
+
+        let customer = cust_result.map_err(|e| AppError::CustomerFetchFailed(e.to_string()))?;
         tracing::info!(
             customer_id = customer.value.customer_id.val,
             customer_name = %customer_name,
             "CustomerInfo fetched"
         );
 
-        // 2. Fetch unencrypted personal info from USS (for KAKAO etc.)
-        let t = Instant::now();
-        let customer_personal_info = self
-            .uss
-            .get_customer_personal_info(customer.value.customer_id.val)
-            .await
-            .map_err(|e| AppError::CustomerPersonalInfoFetchFailed(e.to_string()))?;
-        tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomerPersonalInfo");
-        tracing::info!(
-            customer_id = customer.value.customer_id.val,
-            customer_name = %customer_name,
-            raw_kakao = %customer_personal_info.kakao.val,
-            "CustomerPersonalInfo fetched"
-        );
-
-        // 3. Generate one-time password reset token from USS
-        let t = Instant::now();
-        let token_resp = self
-            .uss
-            .generate_password_reset_token(&req_body.customer_name, merchant_code)
-            .await
-            .map_err(|e| AppError::PasswordResetFailed(e.to_string()))?;
-        tracing::info!(merchant_code, customer_name = %req_body.customer_name, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GeneratePasswordResetToken");
-
+        let token_resp = token_result.map_err(|e| AppError::PasswordResetFailed(e.to_string()))?;
         if !token_resp.success {
             tracing::warn!(customer_name = %customer_name, "USS GeneratePasswordResetToken returned failure");
             return Err(AppError::PasswordResetFailed(
                 "USS returned failure".to_string(),
             ));
         }
-
         let one_time_passwd = token_resp.value.clone();
-        tracing::info!(
-            customer_name = %customer_name,
-            "one-time password generated, result={:?}", token_resp
-        );
 
-        // 4. Load merchant rule config
-        let rule_cfg = self
-            .merchant_repo
-            .get_rule_config(merchant_code)
-            .await
+        let rule_cfg = rule_result
             .map_err(|e| AppError::Internal(e))?
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
+
+        tracing::info!(merchant_code, elapsed_ms = %t_phase1.elapsed().as_millis(), "Phase 1 (customer + token + rule-config) complete");
+
+        // ── Phase 2: Fetch personal-info (needs customer_id from Phase 1) ─
+        let t = Instant::now();
+        let customer_personal_info = self
+            .uss
+            .get_customer_personal_info(customer.value.customer_id.val)
+            .await
+            .map_err(|e| AppError::CustomerPersonalInfoFetchFailed(e.to_string()))?;
+        tracing::info!(merchant_code, elapsed_ms = %t.elapsed().as_millis(), "[USSClient] GetCustomerPersonalInfo");
+        tracing::info!(
+            customer_id = customer.value.customer_id.val,
+            customer_name = %customer_name,
+            raw_kakao = %customer_personal_info.kakao.val,
+            "CustomerPersonalInfo fetched"
+        );
 
         // 5. Parse merchant question configuration
         let questions_map: HashMap<String, Question> = rule_cfg
@@ -450,14 +456,16 @@ impl PlayerVerificationService {
             created_at: chrono::Local::now().naive_local(),
         };
 
-        if let Err(e) = self.validation_repo.insert(record).await {
-            tracing::warn!(error = %e, "insert validation record failed");
-        }
-        tracing::info!(
-            customer_id = customer.value.customer_id.val,
-            merchant_code,
-            "insert success"
-        );
+        let vr = self.validation_repo.clone();
+        let cid = customer.value.customer_id.val;
+        let mc = merchant_code.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = vr.insert(record).await {
+                tracing::warn!(error = %e, "insert validation record failed");
+            } else {
+                tracing::info!(customer_id = cid, merchant_code = %mc, "insert success");
+            }
+        });
 
         let mut data = SubmitVerifyData {
             score_checked,
@@ -644,7 +652,7 @@ fn accurate_judgment_score(
                 score = 0;
                 is_correct = false;
                 tracing::warn!(field_id = %field_id, expected = %expected_value, "bind=true empty value");
-            } else if submitted.to_lowercase() == expected_value.to_lowercase() {
+            } else if submitted.eq_ignore_ascii_case(expected_value) {
                 score = question_cfg.score;
                 is_correct = true;
                 tracing::info!(
