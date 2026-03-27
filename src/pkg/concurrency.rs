@@ -35,7 +35,10 @@ where
         let result = tokio::spawn(fut).await;
         if let Err(e) = result {
             if e.is_panic() {
-                tracing::error!("[spawn_safe] goroutine panic: {e}");
+                let bt = std::backtrace::Backtrace::force_capture();
+                tracing::error!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
+                eprintln!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
+                crate::pkg::logs::flush();
             }
         }
     })
@@ -59,11 +62,11 @@ impl LockCounter {
         }
     }
 
-    pub fn increment(&self) { self.count.fetch_add(1, Ordering::Relaxed); }
-    pub fn decrement(&self) { self.count.fetch_sub(1, Ordering::Relaxed); }
-    pub fn set_active(&self, v: bool) { self.active.store(v, Ordering::Relaxed); }
-    pub fn load_count(&self)  -> i64  { self.count.load(Ordering::Relaxed) }
-    pub fn is_active(&self)   -> bool { self.active.load(Ordering::Relaxed) }
+    pub fn increment(&self) { self.count.fetch_add(1, Ordering::Release); }
+    pub fn decrement(&self) { self.count.fetch_sub(1, Ordering::Release); }
+    pub fn set_active(&self, v: bool) { self.active.store(v, Ordering::Release); }
+    pub fn load_count(&self)  -> i64  { self.count.load(Ordering::Acquire) }
+    pub fn is_active(&self)   -> bool { self.active.load(Ordering::Acquire) }
 }
 
 impl Default for LockCounter {

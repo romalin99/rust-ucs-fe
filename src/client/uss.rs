@@ -95,7 +95,7 @@ pub fn is_profile_not_found(err: &anyhow::Error) -> bool {
 ///
 /// Accepts `"2006-01-02 15:04:05"` and `null` / `""` from JSON.
 /// `format_date()` returns `"YYYY-MM-DD"` or `""`.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct FlexTime(pub Option<chrono::NaiveDateTime>);
 
 const FLEX_TIME_FMT: &str = "%Y-%m-%d %H:%M:%S";
@@ -107,6 +107,15 @@ impl FlexTime {
         self.0
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_default()
+    }
+}
+
+impl Serialize for FlexTime {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self.0 {
+            Some(dt) => s.serialize_str(&dt.format(FLEX_TIME_FMT).to_string()),
+            None => s.serialize_none(),
+        }
     }
 }
 
@@ -558,8 +567,7 @@ impl UssClient {
         let inner = Client::builder()
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(30)
-            // No client-level timeout — per-attempt timeout is applied via
-            // tokio::time::timeout in do_with_retry (avoids double-timeout overhead).
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("Failed to build USS HTTP client");
 
@@ -812,16 +820,19 @@ impl UssClient {
 
 // ── readBody ──────────────────────────────────────────────────────────────────
 
-/// Accept **only status 200**, read up to `MAX_RESPONSE_SIZE` bytes.
+/// Accept **only status 200**; stream-read up to `MAX_RESPONSE_SIZE` bytes.
 ///
 /// Mirrors Go's `readBody`:
 /// - Non-200 → return `UssHttpError { body, status }`
 /// - Body > 100 KB → truncated (same as Go's `io.LimitReader`)
-async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
+///
+/// Uses `resp.chunk()` streaming to cap memory at the limit.
+async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
     let status = resp.status();
 
     if status.as_u16() != 200 {
-        let body = resp.text().await.unwrap_or_default();
+        let snippet = stream_read_up_to(&mut resp, 512).await;
+        let body = String::from_utf8_lossy(&snippet).trim().to_string();
         return Err(UssHttpError {
             body,
             status: status.as_u16(),
@@ -837,14 +848,23 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
         }
     }
 
-    let full = resp
-        .bytes()
-        .await
-        .context("failed to read USS response body")?;
+    let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;
+    Ok(bytes::Bytes::from(buf))
+}
 
-    if full.len() > MAX_RESPONSE_SIZE {
-        Ok(full.slice(..MAX_RESPONSE_SIZE))
-    } else {
-        Ok(full)
+/// Stream-read up to `limit` bytes from a response, then stop.
+async fn stream_read_up_to(resp: &mut reqwest::Response, limit: usize) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(limit.min(8192));
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= limit {
+            break;
+        }
     }
+    buf
 }

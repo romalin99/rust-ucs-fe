@@ -313,28 +313,51 @@ impl MerchantRuleRepository {
             .context("spawn_blocking panicked")?
     }
 
-    /// Slim version: returns only the fields required by the verification flow.
+    /// Slim version: selects only the 6 columns required by the verification flow.
     ///
-    /// Mirrors Go's `GetRuleConfigByMerchantCode`.
+    /// Mirrors Go's `GetRuleConfigByMerchantCode` — uses a dedicated SELECT
+    /// (`MERCHANT_CODE, BINDING_TYPE, EMPTY_SCORE, PASSING_SCORE, QUESTIONS,
+    /// FIELD_TRANSLATIONS`) instead of fetching all 15 columns.
     pub async fn get_rule_config(
         &self,
         merchant_code: &str,
     ) -> Result<Option<MerchantRuleConfig>> {
-        let rule = self.find_by_merchant_code(merchant_code).await?;
-        Ok(rule.map(|r| {
-            MerchantRuleConfig {
-                id:                  r.id,
-                merchant_code:       r.merchant_code,
-                binding_type:        r.binding_type,
-                passing_score:       r.passing_score,
-                empty_score:         r.empty_score,
-                lock_hour:           r.lock_hour,
-                ip_retry_limit:      r.ip_retry_limit,
-                account_retry_limit: r.account_retry_limit,
-                questions_json:      r.questions_json,
-                field_translations:  r.field_translations,
+        let pool    = self.pool.clone();
+        let mc      = merchant_code.to_string();
+        let timeout = self.read_timeout;
+
+        let blocking = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().context("Oracle pool: get connection")?;
+            let sql = "SELECT MERCHANT_CODE, BINDING_TYPE, EMPTY_SCORE, PASSING_SCORE, \
+                              QUESTIONS, FIELD_TRANSLATIONS \
+                       FROM TCG_UCS.MERCHANT_RULE WHERE MERCHANT_CODE = :1";
+
+            let rows = conn.query(sql, &[&mc]).context("get_rule_config query")?;
+
+            for row_result in rows {
+                let row = row_result.context("get_rule_config row read")?;
+                let questions_clob: Option<String> = row.get::<_, Option<String>>(4).unwrap_or(None);
+                let translations_clob: Option<String> = row.get::<_, Option<String>>(5).unwrap_or(None);
+                return Ok(Some(MerchantRuleConfig {
+                    id:                  0,
+                    merchant_code:       row.get::<_, String>(0)?,
+                    binding_type:        row.get::<_, String>(1)?,
+                    empty_score:         row.get::<_, i32>(2)?,
+                    passing_score:       row.get::<_, i32>(3)?,
+                    lock_hour:           0,
+                    ip_retry_limit:      0,
+                    account_retry_limit: 0,
+                    questions_json:      questions_clob,
+                    field_translations:  translations_clob,
+                }));
             }
-        }))
+            Ok(None)
+        });
+
+        tokio::time::timeout(timeout, blocking)
+            .await
+            .map_err(|_| anyhow!("get_rule_config timed out after {:?}", timeout))?
+            .context("spawn_blocking panicked")?
     }
 
     /// Load all merchant rules and build the field-config dropdown map.

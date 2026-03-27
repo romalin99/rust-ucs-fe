@@ -248,14 +248,37 @@ impl ErrorResponse {
 
 // ── IntoResponse — AppError → HTTP 500 ───────────────────────────────────────
 
+impl AppError {
+    /// Map each variant to its (module, error code) pair — mirrors Go's
+    /// `ErrorHandler` middleware which inspects `*apperror.AppError` and
+    /// returns the module/code to the caller.
+    fn module_and_code(&self) -> (&Module, &ErrorCode) {
+        match self {
+            Self::MerchantNotFound(_)                 => (&Module::Merchant,    &ErrorCode::MERCHANT_NOT_FOUND),
+            Self::CustomerFetchFailed(_)              => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
+            Self::CustomerPersonalInfoFetchFailed(_)  => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
+            Self::QuestionLimitExceeded               => (&Module::Verification,&ErrorCode::EXCEED_LIMIT),
+            Self::RedisNotFound                       => (&Module::Redis,       &ErrorCode::DATA_NOT_FOUND),
+            Self::WpsApiFailed(_)                     => (&Module::Wps,         &ErrorCode::WPS_CLIENT_ERR),
+            Self::EmailAlreadyBound                   => (&Module::Verification,&ErrorCode::STATUS_ERR),
+            Self::PhoneAlreadyBound                   => (&Module::Verification,&ErrorCode::STATUS_ERR),
+            Self::ParseJsonFailed(_)                  => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
+            Self::VerifyPlayerInfoFailed(_)           => (&Module::Mcs,         &ErrorCode::MCS_CLIENT_ERR),
+            Self::PasswordResetFailed(_)              => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
+            Self::OracleError(_)                      => (&Module::Oracle,      &ErrorCode::SQL_EXECUTION_FAIL),
+            Self::RedisError(_)                       => (&Module::Redis,       &ErrorCode::SYS_ERR),
+            Self::HttpClientError(_)                  => (&Module::NonBusiness, &ErrorCode::NETWORK_TIMEOUT),
+            Self::JsonError(_)                        => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
+            Self::Internal(_)                         => (&Module::NonBusiness, &ErrorCode::SYS_ERR),
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        tracing::error!(error = %self, "unhandled AppError → 500");
-        let body = ErrorResponse::new(
-            &Module::NonBusiness,
-            &ErrorCode::INTERNAL_ERROR,
-            self.to_string(),
-        );
+        let (module, code) = self.module_and_code();
+        tracing::error!(error = %self, module = module.as_str(), code = %code, "AppError → 500");
+        let body = ErrorResponse::new(module, code, self.to_string());
         (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
     }
 }

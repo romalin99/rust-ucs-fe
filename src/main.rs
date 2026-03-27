@@ -236,6 +236,7 @@ async fn main() -> anyhow::Result<()> {
     let timeout = std::time::Duration::from_secs(app.cfg.shutdown_timeout);
     if tokio::time::timeout(timeout, app.shutdown()).await.is_err() {
         tracing::warn!("graceful shutdown timed out after {}s, forcing exit", timeout.as_secs());
+        crate::pkg::logs::flush();
     }
     Ok(())
 }

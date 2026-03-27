@@ -32,11 +32,12 @@ use tower_governor::{
     governor::GovernorConfigBuilder,
     key_extractor::{GlobalKeyExtractor, KeyExtractor},
 };
+use axum::extract::DefaultBodyLimit;
 use tower_http::{cors::CorsLayer, timeout::TimeoutLayer};
 
 pub use crate::app_state::AppState;
 use crate::handler;
-use crate::middleware::{RecoverLayer, behavior_logger, prometheus_metrics};
+use crate::middleware::{RecoverLayer, behavior_logger, error_handler, prometheus_metrics};
 use crate::router::swagger;
 
 // ── Custom key extractor: request path ────────────────────────────────────────
@@ -145,13 +146,17 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         .merge(materials_router)
         .layer(GovernorLayer::new(global_cfg));
 
+    let body_limit = state.config.body_limit;
+
     // ── Assemble full router ───────────────────────────────────────────────────
     //
     // Layer order (outermost first):
     //   1. Prometheus — records ALL requests
     //   2. RecoverLayer — catches panics → 500 JSON
-    //   3. CORS
-    //   4. BehaviorLogger — API request audit log
+    //   3. ErrorHandler — wraps non-JSON error responses into JSON envelope
+    //   4. CORS
+    //   5. BodyLimit — global body size cap (mirrors Go's fiber.Config.BodyLimit)
+    //   6. BehaviorLogger — API request audit log
     let base = Router::new()
         .merge(system_router)
         .nest("/tcg-ucs-fe", api_router)
@@ -159,7 +164,9 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
             ServiceBuilder::new()
                 .layer(middleware::from_fn(prometheus_metrics))
                 .layer(RecoverLayer)
+                .layer(middleware::from_fn(error_handler))
                 .layer(CorsLayer::permissive())
+                .layer(DefaultBodyLimit::max(body_limit))
                 .layer(middleware::from_fn(behavior_logger)),
         )
         .with_state(state);

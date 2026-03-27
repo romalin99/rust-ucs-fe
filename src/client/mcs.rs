@@ -299,6 +299,7 @@ impl McsClient {
         let inner = Client::builder()
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(30)
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("Failed to build MCS HTTP client");
 
@@ -462,19 +463,19 @@ impl McsClient {
 // readBody — mirrors Go's mcs.readBody
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Accept **only status 200**; read ≤ `MAX_RESPONSE_SIZE` bytes.
+/// Accept **only status 200**; stream-read ≤ `MAX_RESPONSE_SIZE` bytes.
 ///
-/// Non-200: reads up to 512 bytes as an error snippet (mirrors Go's
+/// Non-200: stream-reads up to 512 bytes as an error snippet (mirrors Go's
 /// `io.LimitReader(resp.Body, 512)`).
-async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
+///
+/// Uses `resp.chunk()` streaming to cap memory usage — matching Go's
+/// `io.LimitReader` which never allocates more than the limit.
+async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
     let status = resp.status();
 
     if status.as_u16() != 200 {
-        let cl = resp.content_length().unwrap_or(0);
-        let cap = (cl as usize).min(ERR_SNIPPET_SIZE);
-        let body = resp.bytes().await.unwrap_or_default();
-        let snippet = &body[..body.len().min(cap.max(ERR_SNIPPET_SIZE))];
-        let snippet_str = String::from_utf8_lossy(snippet).trim().to_string();
+        let snippet = stream_read_up_to(&mut resp, ERR_SNIPPET_SIZE).await;
+        let snippet_str = String::from_utf8_lossy(&snippet).trim().to_string();
         anyhow::bail!("status {}: {}", status.as_u16(), snippet_str);
     }
 
@@ -486,14 +487,24 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
         }
     }
 
-    let full = resp
-        .bytes()
-        .await
-        .context("failed to read MCS response body")?;
+    let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;
+    Ok(bytes::Bytes::from(buf))
+}
 
-    if full.len() > MAX_RESPONSE_SIZE {
-        Ok(full.slice(..MAX_RESPONSE_SIZE))
-    } else {
-        Ok(full)
+/// Stream-read up to `limit` bytes from a response, then stop.
+/// Mirrors Go's `io.ReadAll(io.LimitReader(resp.Body, limit))`.
+async fn stream_read_up_to(resp: &mut reqwest::Response, limit: usize) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(limit.min(8192));
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= limit {
+            break;
+        }
     }
+    buf
 }

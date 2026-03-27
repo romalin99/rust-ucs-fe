@@ -43,7 +43,7 @@ pub struct WpsHttpError {
 
 impl std::fmt::Display for WpsHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unexpected status code: {}", self.status)
+        write!(f, "{}", self.body)
     }
 }
 
@@ -105,7 +105,8 @@ impl WpsClient {
         // inside do_with_retry via tokio::time::timeout.
         let inner = Client::builder()
             .pool_idle_timeout(Duration::from_secs(30))
-            .pool_max_idle_per_host(50)
+            .pool_max_idle_per_host(30)
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("Failed to build WPS HTTP client");
 
@@ -228,14 +229,22 @@ impl WpsClient {
     }
 }
 
-/// Accept only status 200; read up to `MAX_RESPONSE_SIZE` bytes.
+/// Accept only status 200; stream-read up to `MAX_RESPONSE_SIZE` bytes.
 /// Non-200 → `WpsHttpError`. Mirrors Go's `readBody`.
-async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
+///
+/// Uses `resp.chunk()` streaming to cap memory at the limit.
+async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
     let status = resp.status();
 
     if status.as_u16() != 200 {
+        let snippet = stream_read_up_to(&mut resp, 512).await;
+        let body = String::from_utf8_lossy(&snippet).trim().to_string();
         return Err(WpsHttpError {
-            body: format!("unexpected status code: {}", status.as_u16()),
+            body: if body.is_empty() {
+                format!("unexpected status code: {}", status.as_u16())
+            } else {
+                body
+            },
             status: status.as_u16(),
         }
         .into());
@@ -249,14 +258,23 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
         }
     }
 
-    let full = resp
-        .bytes()
-        .await
-        .context("failed to read WPS response body")?;
+    let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;
+    Ok(bytes::Bytes::from(buf))
+}
 
-    if full.len() > MAX_RESPONSE_SIZE {
-        Ok(full.slice(..MAX_RESPONSE_SIZE))
-    } else {
-        Ok(full)
+/// Stream-read up to `limit` bytes from a response, then stop.
+async fn stream_read_up_to(resp: &mut reqwest::Response, limit: usize) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(limit.min(8192));
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let remaining = limit.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= limit {
+            break;
+        }
     }
+    buf
 }
