@@ -35,29 +35,44 @@ pub struct RedisInstance {
 static REDIS_DB_MAP: OnceCell<HashMap<String, RedisInstance>> = OnceCell::new();
 
 /// Initialise the global multi-DB Redis map.
-/// Mirrors Go's `Config.InitDBSV2()`.
-pub fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &[RedisDbEntry]) {
-    REDIS_DB_MAP.get_or_init(|| {
-        let mut map = HashMap::with_capacity(dbs.len());
-        let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
-        for db_entry in dbs {
-            let url = if cfg_password.is_empty() {
-                format!("redis://{}/{}", addr, db_entry.db)
-            } else {
-                format!("redis://:{}@{}/{}", cfg_password, addr, db_entry.db)
-            };
-            match redis::Client::open(url.as_str()) {
-                Ok(client) => {
-                    let key = format!("dbidx:{}", db_entry.db);
-                    let ttl = Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
-                    map.insert(key, RedisInstance { client: Arc::new(client), ttl });
-                    tracing::info!(db = db_entry.db, "Redis DB instance initialised");
+/// Mirrors Go's `Config.InitDBSV2()` — creates a client per DB index and pings.
+pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &[RedisDbEntry]) {
+    if REDIS_DB_MAP.get().is_some() {
+        return;
+    }
+    let mut map = HashMap::with_capacity(dbs.len());
+    let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
+    for db_entry in dbs {
+        let url = if cfg_password.is_empty() {
+            format!("redis://{}/{}", addr, db_entry.db)
+        } else {
+            format!("redis://:{}@{}/{}", cfg_password, addr, db_entry.db)
+        };
+        match redis::Client::open(url.as_str()) {
+            Ok(client) => {
+                let mgr_cfg = redis::aio::ConnectionManagerConfig::new()
+                    .set_connection_timeout(Some(Duration::from_secs(10)))
+                    .set_response_timeout(Some(Duration::from_secs(30)))
+                    .set_number_of_retries(3);
+                match redis::aio::ConnectionManager::new_with_config(client.clone(), mgr_cfg).await {
+                    Ok(mut cm) => {
+                        if let Err(e) = redis::cmd("PING").query_async::<String>(&mut cm).await {
+                            tracing::warn!(db = db_entry.db, err = %e, "Redis PING failed (continuing)");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(db = db_entry.db, err = %e, "Redis ConnectionManager init failed (continuing)");
+                    }
                 }
-                Err(e) => tracing::error!(db = db_entry.db, err = %e, "Redis DB client failed"),
+                let key = format!("dbidx:{}", db_entry.db);
+                let ttl = Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
+                map.insert(key, RedisInstance { client: Arc::new(client), ttl });
+                tracing::info!(db = db_entry.db, "Redis DB instance initialised");
             }
+            Err(e) => tracing::error!(db = db_entry.db, err = %e, "Redis DB client failed"),
         }
-        map
-    });
+    }
+    let _ = REDIS_DB_MAP.set(map);
 }
 
 /// Retrieve a Redis DB instance by index.

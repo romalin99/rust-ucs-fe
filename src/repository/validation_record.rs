@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::model::validation_record::ValidationRecord;
@@ -201,7 +201,7 @@ impl ValidationRecordRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
 
             let sql = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                              IP, PASSING_SCORE, SCORE, QAS \
+                              IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                        FROM TCG_UCS.VALIDATION_RECORD \
                        WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2 \
                        ORDER BY CREATED_AT DESC \
@@ -210,6 +210,9 @@ impl ValidationRecordRepository {
             let rows = conn.query(sql, &[&customer_id, &mc]).context("FindLatest query")?;
             for row_result in rows {
                 let row = row_result.context("FindLatest row read")?;
+                let created_at: NaiveDateTime = row.get::<_, Option<NaiveDateTime>>(9)
+                    .unwrap_or_default()
+                    .unwrap_or_else(|| chrono::Local::now().naive_local());
                 let rec = ValidationRecord {
                     id:            row.get::<_, Option<i64>>(0).unwrap_or_default(),
                     customer_id:   row.get::<_, i64>(1).context("CUSTOMER_ID")?,
@@ -220,7 +223,7 @@ impl ValidationRecordRepository {
                     passing_score: row.get::<_, i32>(6).context("PASSING_SCORE")?,
                     score:         row.get::<_, i32>(7).context("SCORE")?,
                     qas:           row.get::<_, String>(8).context("QAS")?,
-                    created_at:    Utc::now(),
+                    created_at,
                 };
                 return Ok(Some(rec));
             }
@@ -236,6 +239,9 @@ impl ValidationRecordRepository {
     // ── Read — list queries ───────────────────────────────────────────────────
 
     fn map_row(row: oracle::Row) -> Result<ValidationRecord> {
+        let created_at: NaiveDateTime = row.get::<_, Option<NaiveDateTime>>(9)
+            .unwrap_or_default()
+            .unwrap_or_else(|| chrono::Local::now().naive_local());
         Ok(ValidationRecord {
             id:            row.get::<_, Option<i64>>(0).unwrap_or_default(),
             customer_id:   row.get::<_, i64>(1).context("CUSTOMER_ID")?,
@@ -246,7 +252,7 @@ impl ValidationRecordRepository {
             passing_score: row.get::<_, i32>(6).context("PASSING_SCORE")?,
             score:         row.get::<_, i32>(7).context("SCORE")?,
             qas:           row.get::<_, String>(8).context("QAS")?,
-            created_at:    Utc::now(),
+            created_at,
         })
     }
 
@@ -260,7 +266,7 @@ impl ValidationRecordRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                               IP, PASSING_SCORE, SCORE, QAS \
+                               IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
                         WHERE CUSTOMER_ID = :1 \
                         ORDER BY CREATED_AT DESC";
@@ -291,7 +297,7 @@ impl ValidationRecordRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                               IP, PASSING_SCORE, SCORE, QAS \
+                               IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
                         WHERE MERCHANT_CODE = :1 \
                         ORDER BY CREATED_AT DESC";
@@ -326,7 +332,7 @@ impl ValidationRecordRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                               IP, PASSING_SCORE, SCORE, QAS \
+                               IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
                         WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2 \
                         ORDER BY CREATED_AT DESC";
@@ -358,7 +364,7 @@ impl ValidationRecordRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                               IP, PASSING_SCORE, SCORE, QAS \
+                               IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
                         WHERE IP = :1 \
                         ORDER BY CREATED_AT DESC";
@@ -658,7 +664,7 @@ impl ValidationRecordRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
 
             let sql = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
-                              IP, PASSING_SCORE, SCORE, QAS \
+                              IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                        FROM TCG_UCS.VALIDATION_RECORD \
                        WHERE CREATED_AT >= TO_TIMESTAMP(:1, 'YYYY-MM-DD HH24:MI:SS') \
                          AND CREATED_AT <  TO_TIMESTAMP(:2, 'YYYY-MM-DD HH24:MI:SS') \
@@ -706,7 +712,9 @@ impl ValidationRecordRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
 
             let mut sql = format!(
-                "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE,                         IP, PASSING_SCORE, SCORE, QAS                  FROM TCG_UCS.VALIDATION_RECORD WHERE {}", wc
+                "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
+                        IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
+                 FROM TCG_UCS.VALIDATION_RECORD WHERE {}", wc
             );
             if let Some(ref order) = ob {
                 sql.push_str(&format!(" ORDER BY {}", order));

@@ -36,6 +36,7 @@ pub async fn get_question_list(
 ) -> Response {
     let merchant_code = extract_header(&headers, "Merchant");
     let customer_ip = extract_header(&headers, "CustomerIP");
+    let language = extract_header(&headers, "Language");
 
     // ── Parameter validation (400) ────────────────────────────────────────────
     if merchant_code.is_empty() {
@@ -52,6 +53,14 @@ pub async fn get_question_list(
             StatusCode::BAD_REQUEST,
             "ucsfe.questions.customerip_param_missing",
             "CustomerIP header is required",
+        );
+    }
+    if language.is_empty() {
+        tracing::warn!("missing Language header");
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "ucsfe.questions.language_param_missing",
+            "Language header is required",
         );
     }
     if params.customer_name.is_empty() {
@@ -71,7 +80,7 @@ pub async fn get_question_list(
     // ── Dispatch to service ───────────────────────────────────────────────────
     match state
         .verification_svc
-        .get_question_list(&merchant_code, &customer_ip, &params.customer_name)
+        .get_question_list(&merchant_code, &customer_ip, &params.customer_name, &language)
         .await
     {
         Ok(result) => {
@@ -250,7 +259,8 @@ pub async fn submit_verify_materials(
             )
         }
 
-        Err(AppError::CustomerFetchFailed(_)) => err_response(
+        Err(AppError::CustomerFetchFailed(_))
+        | Err(AppError::CustomerPersonalInfoFetchFailed(_)) => err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ucsfe.materials.customer_not_exists",
             "Internal server error",

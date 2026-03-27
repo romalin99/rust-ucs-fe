@@ -3,6 +3,7 @@
 /// Mirrors Go's `internal/service/cron.go`.
 /// Uses `tokio::time::interval` for simple interval-based jobs (no external cron crate needed).
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,6 +50,8 @@ impl CommonCronJobs {
             let timeout_secs = cfg.timeout;
             let repos = repos.clone();
 
+            let running = Arc::new(AtomicBool::new(false));
+
             tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -61,6 +64,12 @@ impl CommonCronJobs {
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
+                            if running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                                tracing::warn!(job = %name, "CRON job still running, skipping this tick (singleton mode)");
+                                continue;
+                            }
+                            let guard = running.clone();
+
                             let start = std::time::Instant::now();
                             tracing::info!(job = %name, interval = interval_secs, "CRON job started");
 
@@ -70,6 +79,8 @@ impl CommonCronJobs {
                                 job_future,
                             )
                             .await;
+
+                            guard.store(false, Ordering::Release);
 
                             match result {
                                 Ok(Ok(())) => tracing::info!(

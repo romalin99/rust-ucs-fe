@@ -299,7 +299,6 @@ impl McsClient {
         let inner = Client::builder()
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(30)
-            .timeout(SINGLE_REQ_TIMEOUT)
             .build()
             .expect("Failed to build MCS HTTP client");
 
@@ -360,7 +359,12 @@ impl McsClient {
             }
 
             if attempt < MAX_RETRIES {
-                sleep(RETRY_DELAY).await;
+                tokio::select! {
+                    _ = sleep(RETRY_DELAY) => {}
+                    _ = tokio::signal::ctrl_c() => {
+                        return Err(anyhow::anyhow!("context cancelled, aborting MCS retries"));
+                    }
+                }
             }
         }
 
@@ -466,10 +470,20 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
     let status = resp.status();
 
     if status.as_u16() != 200 {
+        let cl = resp.content_length().unwrap_or(0);
+        let cap = (cl as usize).min(ERR_SNIPPET_SIZE);
         let body = resp.bytes().await.unwrap_or_default();
-        let snippet = &body[..body.len().min(ERR_SNIPPET_SIZE)];
+        let snippet = &body[..body.len().min(cap.max(ERR_SNIPPET_SIZE))];
         let snippet_str = String::from_utf8_lossy(snippet).trim().to_string();
         anyhow::bail!("status {}: {}", status.as_u16(), snippet_str);
+    }
+
+    if let Some(cl) = resp.content_length() {
+        if cl > MAX_RESPONSE_SIZE as u64 {
+            return Err(anyhow::anyhow!(
+                "MCS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+            ));
+        }
     }
 
     let full = resp

@@ -12,7 +12,7 @@
 ///   - SIGUSR2 → same as SIGUSR1.
 ///
 /// On macOS/Linux SIGUSR1 is available; on Windows this is a no-op.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,8 +48,9 @@ impl Default for FlightRecorderConfig {
 ///
 /// Mirrors Go's `observability.FlightRecorder`.
 pub struct FlightRecorder {
-    stop_tx: watch::Sender<bool>,
-    cfg:     Arc<FlightRecorderConfig>,
+    stop_tx:    watch::Sender<bool>,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
+    cfg:        Arc<FlightRecorderConfig>,
 }
 
 impl FlightRecorder {
@@ -72,11 +73,11 @@ impl FlightRecorder {
         let (stop_tx, stop_rx) = watch::channel(false);
 
         let cfg_clone = cfg.clone();
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             listen_signals(cfg_clone, stop_rx).await;
         });
 
-        Ok(Self { stop_tx, cfg })
+        Ok(Self { stop_tx, task_handle: Some(task_handle), cfg })
     }
 
     /// Manually trigger a trace dump without waiting for a signal.
@@ -86,16 +87,15 @@ impl FlightRecorder {
         dump_trace(&self.cfg.output_dir)
     }
 
-    /// Stop the signal listener.
+    /// Stop the signal listener and await the background task.
     ///
-    /// Mirrors Go's `FlightRecorder.Stop()`.
-    pub fn stop(self) {
+    /// Mirrors Go's `FlightRecorder.Stop()` which calls `wg.Wait()`.
+    pub async fn stop(mut self) {
         let _ = self.stop_tx.send(true);
+        if let Some(handle) = self.task_handle.take() {
+            let _ = handle.await;
+        }
         tracing::info!("[FlightRecorder] stopped");
-    }
-
-    fn trace_path(&self) -> PathBuf {
-        Path::new(&self.cfg.output_dir).join(TRACE_FILE_NAME)
     }
 }
 

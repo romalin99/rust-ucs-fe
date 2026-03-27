@@ -2,12 +2,12 @@
 ///
 /// Mirrors Go's `internal/service/field_id_uss_mapping_cache.go`.
 ///
-/// Cache key format: `"{FIELD_ID}:{MCS_ID}"` -> USS_ID string.
-/// Example: `"GENDER:1" -> "1"`, `"STATE:501" -> "1"`, `"ID_TYPE:4239" -> "31"`.
-use std::collections::HashSet;
+/// Cache key format: `"{FIELD_ID}:{FIELD_NAME}"` -> USS_ID string.
+/// Example: `"GENDER:Male" -> "1"`, `"ID_TYPE:Passport" -> "1"`.
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use dashmap::DashMap;
@@ -18,7 +18,7 @@ use crate::repository::FieldIdUssMappingRepository;
 
 // ── Global cache ─────────────────────────────────────────────────────────────
 
-/// Global USS mapping cache: `"{FIELD_ID}:{MCS_ID}"` -> USS_ID string.
+/// Global USS mapping cache: `"{FIELD_ID}:{FIELD_NAME}"` -> USS_ID string.
 pub static GLOBAL_USS_MAPPING_CONFIGS: OnceCell<Arc<DashMap<String, String>>> = OnceCell::new();
 
 fn global_uss_mappings() -> Arc<DashMap<String, String>> {
@@ -73,7 +73,7 @@ pub async fn do_load_uss_mapping_configs(repo: &FieldIdUssMappingRepository) -> 
     let mut fresh_keys = HashSet::with_capacity(total);
 
     for (i, item) in list.iter().enumerate() {
-        let key = build_uss_mapping_key(&item.field_id, item.mcs_id);
+        let key = build_uss_mapping_key(&item.field_id, &item.field_name);
         let uss_id_str = item.uss_id.to_string();
 
         fresh_keys.insert(key.clone());
@@ -108,22 +108,19 @@ pub async fn do_load_uss_mapping_configs(repo: &FieldIdUssMappingRepository) -> 
     Ok(())
 }
 
-// ── FieldIdUssMappingLoader (startup loader + periodic refresh) ──────────────
+// ── FieldIdUssMappingLoader (startup loader only — periodic refresh via CommonCronJobs) ─
 
 pub struct FieldIdUssMappingLoader {
-    stop_tx: tokio::sync::watch::Sender<bool>,
+    _guard: (),
 }
 
 impl FieldIdUssMappingLoader {
-    /// Starts async initial load and background 30-minute refresh.
-    ///
-    /// Mirrors Go's `NewFieldIdUssMappingLoader(cm)`.
+    /// Starts async initial load. Periodic refresh is handled by `CommonCronJobs`,
+    /// matching Go where the internal periodic loop is unused and cron drives refreshes.
     pub fn start(repo: Arc<FieldIdUssMappingRepository>) -> Self {
         global_uss_mappings();
 
-        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
         let repo_clone = repo.clone();
-
         tokio::spawn(async move {
             tracing::info!("Starting async initialisation of USS mapping configs...");
 
@@ -132,57 +129,55 @@ impl FieldIdUssMappingLoader {
                 USS_MAPPING_INIT_COMPLETE.store(true, Ordering::Release);
                 uss_mapping_init_notify().notify_waiters();
             }
-
-            let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
-            interval.tick().await; // consume the immediate first tick
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        tracing::info!("Starting scheduled refresh of USS mapping configs...");
-                        if let Err(e) = do_load_uss_mapping_configs(&repo_clone).await {
-                            tracing::warn!(error = %e, "Scheduled USS mapping config refresh failed");
-                        }
-                    }
-                    _ = stop_rx.changed() => {
-                        tracing::info!("USS mapping config refresh task exited");
-                        break;
-                    }
-                }
-            }
         });
 
-        Self { stop_tx }
+        Self { _guard: () }
     }
 
     pub fn stop(&self) {
-        let _ = self.stop_tx.send(true);
+        tracing::info!("USS mapping loader stopped (refresh handled by cron)");
     }
 }
 
 // ── Public accessors ─────────────────────────────────────────────────────────
 
-fn build_uss_mapping_key(field_id: &str, mcs_id: i64) -> String {
-    format!("{}:{}", field_id, mcs_id)
+/// Build cache key for internal loading: `"{FIELD_ID}:{FIELD_NAME}"`.
+/// Mirrors Go's `buildUssMappingKey(fieldID, fieldName string)`.
+fn build_uss_mapping_key(field_id: &str, field_name: &str) -> String {
+    format!("{}:{}", field_id, field_name)
 }
 
-/// Build cache key from string field_id and string mcs_id (used in scoring).
-/// Mirrors Go's `buildFieldIdUssIdMappingKey(fieldID, mcsID string)`.
-pub fn build_field_id_uss_id_mapping_key(field_id: &str, mcs_id: &str) -> String {
-    format!("{}:{}", field_id, mcs_id)
+/// Build cache key from string field_id and string field_name (used in scoring).
+/// Mirrors Go's `buildFieldIdUssIdMappingKey(fieldID, fieldName string)`.
+pub fn build_field_id_uss_id_mapping_key(field_id: &str, field_name: &str) -> String {
+    format!("{}:{}", field_id, field_name)
 }
 
-/// Look up a USS_ID string by field_id + mcs_id.
+/// Set a single USS mapping entry. Mirrors Go's `SetUssMappingConfig`.
+pub fn set_uss_mapping_config(field_id: &str, field_name: &str, uss_id: i32) {
+    let key = build_uss_mapping_key(field_id, field_name);
+    global_uss_mappings().insert(key, uss_id.to_string());
+}
+
+/// Look up a USS_ID string by field_id + field_name.
 /// Waits for the initial load to complete before reading.
-/// Mirrors Go's `GlobalUssMappingConfigs.Load(key)`.
-pub async fn get_uss_mapping_config(field_id: &str, mcs_id: &str) -> Option<String> {
+/// Mirrors Go's `GetUssMappingConfig`.
+pub async fn get_uss_mapping_config(field_id: &str, field_name: &str) -> Option<String> {
     wait_for_uss_mapping_init().await;
-    let key = build_field_id_uss_id_mapping_key(field_id, mcs_id);
+    let key = build_field_id_uss_id_mapping_key(field_id, field_name);
     global_uss_mappings().get(&key).map(|v| v.clone())
 }
 
 /// Synchronous lookup (no init wait) for use in hot paths where init is guaranteed.
-pub fn get_uss_mapping_config_sync(field_id: &str, mcs_id: &str) -> Option<String> {
-    let key = build_field_id_uss_id_mapping_key(field_id, mcs_id);
+pub fn get_uss_mapping_config_sync(field_id: &str, field_name: &str) -> Option<String> {
+    let key = build_field_id_uss_id_mapping_key(field_id, field_name);
     global_uss_mappings().get(&key).map(|v| v.clone())
+}
+
+/// Return a snapshot of all USS mapping configs.
+/// Mirrors Go's `GetAllUssMappingConfigs`.
+pub async fn get_all_uss_mapping_configs() -> HashMap<String, String> {
+    wait_for_uss_mapping_init().await;
+    let cache = global_uss_mappings();
+    cache.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect()
 }

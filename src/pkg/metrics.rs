@@ -60,18 +60,20 @@ impl OraclePoolMetrics {
 
 // ── Redis pool metrics ────────────────────────────────────────────────────────
 
-/// Prometheus gauges for Redis connection pool statistics.
+/// Prometheus gauges/counters for Redis connection pool statistics.
 ///
 /// Mirrors Go's `pkg/metrics/redis_metrics.go`.
+/// Gauge for current values (pool_size, total_conns, idle_conns, wait_duration_ns).
+/// Counter for cumulative monotonic values (hits, misses, timeouts, wait_count, stale_conns).
 pub struct RedisPoolMetrics {
     pub max_pool_size:    GaugeVec,
-    pub hits:             GaugeVec,
-    pub misses:           GaugeVec,
-    pub timeouts:         GaugeVec,
+    pub hits:             CounterVec,
+    pub misses:           CounterVec,
+    pub timeouts:         CounterVec,
     pub total_conns:      GaugeVec,
     pub idle_conns:       GaugeVec,
-    pub stale_conns:      GaugeVec,
-    pub wait_count:       GaugeVec,
+    pub stale_conns:      CounterVec,
+    pub wait_count:       CounterVec,
     pub wait_duration_ns: GaugeVec,
 }
 
@@ -80,21 +82,28 @@ impl RedisPoolMetrics {
         let g = |name: &str, help: &str| {
             register_gauge_vec_with_registry!(
                 Opts::new(name, help),
-                &["instance"],
+                &["pool"],
                 registry
-            ).unwrap_or_else(|_| GaugeVec::new(Opts::new(name, help), &["instance"]).unwrap())
+            ).unwrap_or_else(|_| GaugeVec::new(Opts::new(name, help), &["pool"]).unwrap())
+        };
+        let c = |name: &str, help: &str| {
+            register_counter_vec_with_registry!(
+                Opts::new(name, help),
+                &["pool"],
+                registry
+            ).unwrap_or_else(|_| CounterVec::new(Opts::new(name, help), &["pool"]).unwrap())
         };
 
         Self {
             max_pool_size:    g("redis_max_pool_size",          "Configured Redis pool size"),
-            hits:             g("redis_hits_total",             "Cumulative cache hits"),
-            misses:           g("redis_misses_total",           "Cumulative cache misses"),
-            timeouts:         g("redis_timeouts_total",         "Cumulative pool timeouts"),
+            hits:             c("redis_hits_total",             "Total number of Redis connection pool hits"),
+            misses:           c("redis_misses_total",           "Total number of Redis connection pool misses"),
+            timeouts:         c("redis_timeouts_total",         "Total number of Redis connection pool timeouts"),
             total_conns:      g("redis_total_connections",      "Current total connections"),
             idle_conns:       g("redis_idle_connections",       "Current idle connections"),
-            stale_conns:      g("redis_stale_connections_total","Cumulative stale connections closed"),
-            wait_count:       g("redis_wait_count_total",       "Cumulative pool wait count"),
-            wait_duration_ns: g("redis_wait_duration_ns_total", "Cumulative pool wait duration (ns)"),
+            stale_conns:      c("redis_stale_conns_total",      "Total number of stale Redis connections"),
+            wait_count:       c("redis_wait_count_total",       "Total number of times waiting for a Redis connection"),
+            wait_duration_ns: g("redis_wait_duration_ns_total", "Total wait duration for Redis connections (ns)"),
         }
     }
 }

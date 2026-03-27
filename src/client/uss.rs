@@ -26,6 +26,12 @@ fn i32_from_null_or_int<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<
     Ok(Option::<i32>::deserialize(d)?.unwrap_or(0))
 }
 
+/// Go's `UnmarshalJSON` pre-sets `UsState = NullInt32{Val: -1}` before unmarshalling,
+/// so when the `"usState"` key is absent, serde needs to use this instead of `NullInt32::default()`.
+fn default_us_state() -> NullInt32 {
+    NullInt32 { val: -1, valid: false }
+}
+
 /// Deserialize `Option<T>` where an explicit JSON `null` maps to `T::default()`.
 ///
 /// `#[serde(default)]` only fires when a key is *absent* from the object.
@@ -213,6 +219,24 @@ impl<'de> Deserialize<'de> for NullInt32 {
     }
 }
 
+/// Mirrors Go's `NullBool`.
+///
+/// JSON value may be `true`, `false`, or `null`; null → `{val: false, valid: false}`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct NullBool {
+    pub val:   bool,
+    pub valid: bool,
+}
+
+impl<'de> Deserialize<'de> for NullBool {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        match Option::<bool>::deserialize(d)? {
+            None => Ok(NullBool { val: false, valid: false }),
+            Some(v) => Ok(NullBool { val: v, valid: true }),
+        }
+    }
+}
+
 /// Mirrors Go's `NullInt` (int64).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct NullInt {
@@ -344,7 +368,7 @@ pub struct CustomerAdditionalInfo {
     #[serde(rename = "officialAppLoginStatus",default)] pub official_app_login_status: NullString,
     // ── Numeric fields ────────────────────────────────────────────────────────
     #[serde(rename = "customerId", default)] pub customer_id: NullInt,
-    #[serde(rename = "usState",    default)] pub us_state:    NullInt32,
+    #[serde(rename = "usState",    default = "default_us_state")] pub us_state: NullInt32,
     #[serde(rename = "version", deserialize_with = "i32_from_null_or_int", default)]
     pub version: i32,
     // ── Bool fields ───────────────────────────────────────────────────────────
@@ -435,6 +459,74 @@ pub struct PasswordResetTokenResponse {
     #[serde(default)] pub value:   String,
 }
 
+/// Mirrors Go's `CustomerPersonalInfo` — envelope for personal info API.
+///
+/// JSON shape: `{ "success": true, "value": { … } }`
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomerPersonalInfo {
+    #[serde(default)] pub success: bool,
+    #[serde(default)] pub value:   CustomerPersonalInfoValue,
+}
+
+/// Mirrors Go's `CustomerPersonalInfoValue` — full personal info from
+/// `GET /customer/personal-info?customerId=xxx` (unencrypted field values).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CustomerPersonalInfoValue {
+    #[serde(rename = "birthday",                default)] pub birthday:                 FlexTime,
+    #[serde(rename = "passwordLastModifyDate",  default)] pub password_last_modify_date: FlexTime,
+    #[serde(rename = "placeOfBirth",            default)] pub place_of_birth:           NullString,
+    #[serde(rename = "mayaId",                  default)] pub maya_id:                  NullString,
+    #[serde(rename = "merchantCode",            default)] pub merchant_code:            NullString,
+    #[serde(rename = "customerName",            default)] pub customer_name:            NullString,
+    #[serde(rename = "stateValue",              default)] pub state_value:              NullString,
+    #[serde(rename = "appleUid",                default)] pub apple_uid:                NullString,
+    #[serde(rename = "nickname",                default)] pub nickname:                 NullString,
+    #[serde(rename = "payeeName",               default)] pub payee_name:               NullString,
+    #[serde(rename = "mobileNo",                default)] pub mobile_no:                NullString,
+    #[serde(rename = "countryCode",             default)] pub country_code:             NullString,
+    #[serde(rename = "qqNo",                    default)] pub qq_no:                    NullString,
+    #[serde(rename = "wechat",                  default)] pub wechat:                   NullString,
+    #[serde(rename = "lineId",                  default)] pub line_id:                  NullString,
+    #[serde(rename = "facebookId",              default)] pub facebook_id:              NullString,
+    #[serde(rename = "whatsAppId",              default)] pub whats_app_id:             NullString,
+    #[serde(rename = "idNumber",                default)] pub id_number:                NullString,
+    #[serde(rename = "zalo",                    default)] pub zalo:                     NullString,
+    #[serde(rename = "password",                default)] pub password:                 NullString,
+    #[serde(rename = "telegram",                default)] pub telegram:                 NullString,
+    #[serde(rename = "google",                  default)] pub google:                   NullString,
+    #[serde(rename = "facebookUid",             default)] pub facebook_uid:             NullString,
+    #[serde(rename = "googleId",                default)] pub google_id:                NullString,
+    #[serde(rename = "idVerificationStatus",    default)] pub id_verification_status:   NullString,
+    #[serde(rename = "glifeId",                 default)] pub glife_id:                 NullString,
+    #[serde(rename = "paymentPassword",         default)] pub payment_password:         NullString,
+    #[serde(rename = "city",                    default)] pub city:                     NullString,
+    #[serde(rename = "kakao",                   default)] pub kakao:                    NullString,
+    #[serde(rename = "zipcode",                 default)] pub zipcode:                  NullString,
+    #[serde(rename = "address",                 default)] pub address:                  NullString,
+    #[serde(rename = "twitter",                 default)] pub twitter:                  NullString,
+    #[serde(rename = "viber",                   default)] pub viber:                    NullString,
+    #[serde(rename = "appleId",                 default)] pub apple_id:                 NullString,
+    #[serde(rename = "email",                   default)] pub email:                    NullString,
+    #[serde(rename = "permanentAddress",        default)] pub permanent_address:        NullString,
+    #[serde(rename = "region",                  default)] pub region:                   NullString,
+    #[serde(rename = "nationality",             default)] pub nationality:              NullString,
+    #[serde(rename = "customerId",              default)] pub customer_id:              NullInt,
+    #[serde(rename = "recommenderId",           default)] pub recommender_id:           NullInt,
+    #[serde(rename = "gender",                  default)] pub gender:                   NullInt32,
+    #[serde(rename = "idType",                  default)] pub id_type:                  NullInt32,
+    #[serde(rename = "type",                    default)] pub customer_type:            NullInt32,
+    #[serde(rename = "maritalStatus",           default)] pub marital_status:           NullInt32,
+    #[serde(rename = "occupation",              default)] pub occupation:               NullInt32,
+    #[serde(rename = "sourceOfIncome",          default)] pub source_of_income:         NullInt32,
+    #[serde(rename = "usState",                 default)] pub us_state:                 NullInt32,
+    #[serde(rename = "isEmailVerification", deserialize_with = "bool_from_null_or_bool", default)]
+    pub is_email_verification: bool,
+    #[serde(rename = "idVerification", deserialize_with = "bool_from_null_or_bool", default)]
+    pub id_verification: bool,
+    #[serde(rename = "isOfficialAppLogin",      default)] pub is_official_app_login:    NullBool,
+    #[serde(rename = "isMobileVerified",        default)] pub is_mobile_verified:       NullBool,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // client.go
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -518,7 +610,12 @@ impl UssClient {
             }
 
             if attempt < MAX_RETRIES {
-                sleep(RETRY_DELAY).await;
+                tokio::select! {
+                    _ = sleep(RETRY_DELAY) => {}
+                    _ = tokio::signal::ctrl_c() => {
+                        return Err(anyhow::anyhow!("context cancelled, aborting retries"));
+                    }
+                }
             }
         }
 
@@ -604,6 +701,54 @@ impl UssClient {
         Ok(result)
     }
 
+    /// Retrieve customer personal information by customer ID.
+    ///
+    /// Mirrors Go's `Client.GetCustomerPersonalInfo`.
+    /// Corresponds to: GET /tcg-uss-ae/customer/personal-info?customerId=xxx
+    pub async fn get_customer_personal_info(
+        &self,
+        customer_id: i64,
+    ) -> Result<CustomerPersonalInfoValue> {
+        let start = Instant::now();
+        let url = format!(
+            "{}/{}customer/personal-info?customerId={}",
+            self.base_url,
+            self.base_path,
+            customer_id
+        );
+
+        tracing::info!(url = %url, "[USSClient] GetCustomerPersonalInfo request");
+
+        let body = self
+            .do_with_retry(|| self.do_get(&url))
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    customer_id,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    error = %e,
+                    "[USSClient] GetCustomerPersonalInfo failed"
+                );
+                e
+            })
+            .with_context(|| format!("GetCustomerPersonalInfo request failed for customerId={customer_id}"))?;
+
+        let result = serde_json::from_slice::<CustomerPersonalInfo>(&body)
+            .with_context(|| {
+                format!(
+                    "deserialization failed, raw response: {}",
+                    String::from_utf8_lossy(&body)
+                )
+            })?;
+
+        tracing::info!(
+            customer_id,
+            elapsed_ms = start.elapsed().as_millis(),
+            "[USSClient] GetCustomerPersonalInfo success"
+        );
+        Ok(result.value)
+    }
+
     /// Request a one-time password reset token for the given customer.
     ///
     /// Mirrors Go's `Client.GeneratePasswordResetToken`.
@@ -684,7 +829,14 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
         .into());
     }
 
-    // Read the full body then cap at MAX_RESPONSE_SIZE (mirrors Go's io.LimitReader).
+    if let Some(cl) = resp.content_length() {
+        if cl > MAX_RESPONSE_SIZE as u64 {
+            return Err(anyhow::anyhow!(
+                "USS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+            ));
+        }
+    }
+
     let full = resp
         .bytes()
         .await

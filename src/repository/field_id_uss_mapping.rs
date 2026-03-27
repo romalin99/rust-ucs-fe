@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use crate::model::FieldIdUssMapping;
 use crate::repository::merchant_rule::OraclePool;
 
-const COLUMNS: &str = "ID, MCS_ID, FIELD_ID, FIELD_NAME, USS_ID";
+const COLUMNS: &str = "ID, MCS_ID, FIELD_ID, FIELD_NAME, USS_ID, CREATE_TIME, UPDATE_TIME";
 
 #[derive(Clone)]
 pub struct FieldIdUssMappingRepository {
@@ -56,11 +56,13 @@ impl FieldIdUssMappingRepository {
             for row_result in rows {
                 let row = row_result.context("read row")?;
                 list.push(FieldIdUssMapping {
-                    id:         row.get::<_, i64>("ID")?,
-                    mcs_id:     row.get::<_, i64>("MCS_ID")?,
-                    field_id:   row.get::<_, String>("FIELD_ID")?,
-                    field_name: row.get::<_, String>("FIELD_NAME")?,
-                    uss_id:     row.get::<_, i32>("USS_ID")?,
+                    id:          row.get::<_, i64>("ID")?,
+                    mcs_id:      row.get::<_, i64>("MCS_ID")?,
+                    field_id:    row.get::<_, String>("FIELD_ID")?,
+                    field_name:  row.get::<_, String>("FIELD_NAME")?,
+                    uss_id:      row.get::<_, i32>("USS_ID")?,
+                    create_time: row.get::<_, Option<chrono::NaiveDateTime>>("CREATE_TIME").unwrap_or(None),
+                    update_time: row.get::<_, Option<chrono::NaiveDateTime>>("UPDATE_TIME").unwrap_or(None),
                 });
             }
             Ok(list)

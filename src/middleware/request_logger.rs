@@ -59,9 +59,9 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     // Call tracing macros DIRECTLY so file:line points to this middleware,
     // not to a wrapper function in logs.rs.
     match status {
-        500..=599 => tracing::error!(target: "behavior", "{}", msg),
-        400..=499 => tracing::warn!(target: "behavior", "{}", msg),
-        _         => tracing::info!(target: "behavior", "{}", msg),
+        s if s >= 500 => tracing::error!(target: "behavior", "{}", msg),
+        400..=499     => tracing::warn!(target: "behavior", "{}", msg),
+        _             => tracing::info!(target: "behavior", "{}", msg),
     }
 
     response

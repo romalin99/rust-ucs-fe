@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use dashmap::DashMap;
@@ -93,6 +93,10 @@ pub async fn do_load_field_configs(repo: &MerchantRuleRepository) -> Result<()> 
     let total = merchant_map.len();
 
     let cache = global_configs();
+
+    // Collect fresh keys so we can purge stale entries afterwards (mirrors Go).
+    let mut fresh_keys = std::collections::HashSet::with_capacity(total);
+
     for (i, (merchant_code, dd_map)) in merchant_map.into_iter().enumerate() {
         if i < 10 {
             tracing::info!(
@@ -102,11 +106,25 @@ pub async fn do_load_field_configs(repo: &MerchantRuleRepository) -> Result<()> 
                 "Loaded field config entry"
             );
         }
+        fresh_keys.insert(merchant_code.clone());
         cache.insert(merchant_code, Arc::new(dd_map));
+    }
+
+    // Purge merchants no longer present in DB (mirrors Go's Range + Delete).
+    let stale_keys: Vec<String> = cache
+        .iter()
+        .filter(|entry| !fresh_keys.contains(entry.key()))
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    for key in &stale_keys {
+        cache.remove(key);
+        tracing::info!(merchant_code = %key, "Purged stale field config");
     }
 
     tracing::info!(
         total,
+        purged = stale_keys.len(),
         elapsed_ms = start.elapsed().as_millis(),
         "✅ template fields configs loaded"
     );
@@ -118,59 +136,34 @@ pub async fn do_load_field_configs(repo: &MerchantRuleRepository) -> Result<()> 
     Ok(())
 }
 
-// ── InitLoadingData (startup loader + periodic refresh) ──────────────────────
+// ── InitLoadingData (startup loader only — periodic refresh via CommonCronJobs) ─
 
 pub struct InitLoadingData {
-    stop_tx: tokio::sync::watch::Sender<bool>,
+    _guard: (),
 }
 
 impl InitLoadingData {
-    /// Starts async initial load and background 30-minute refresh.
-    ///
-    /// Mirrors Go's `NewInitLoadingData(cm)`.
+    /// Starts async initial load. Periodic refresh is handled by `CommonCronJobs`,
+    /// matching Go where `startPeriodicLoad` is unused and cron drives refreshes.
     pub fn start(repo: Arc<MerchantRuleRepository>) -> Self {
-        // Ensure the global cache exists.
         global_configs();
 
-        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
-
         let repo_clone = repo.clone();
-
         tokio::spawn(async move {
             tracing::info!("Starting async initialisation of field configs...");
 
             if let Err(e) = do_load_field_configs(&repo_clone).await {
                 tracing::error!(error = %e, "Initial field config load failed");
-                // Still mark as complete so callers are not blocked forever.
                 INIT_COMPLETE.store(true, Ordering::Release);
                 init_notify().notify_waiters();
             }
-
-            // Periodic refresh every 30 minutes (mirrors Go's `startPeriodicLoad`).
-            let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
-            interval.tick().await; // consume the immediate first tick
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        tracing::info!("Starting scheduled refresh of field configs...");
-                        if let Err(e) = do_load_field_configs(&repo_clone).await {
-                            tracing::warn!(error = %e, "Scheduled field config refresh failed");
-                        }
-                    }
-                    _ = stop_rx.changed() => {
-                        tracing::info!("Field config refresh goroutine exited");
-                        break;
-                    }
-                }
-            }
         });
 
-        Self { stop_tx }
+        Self { _guard: () }
     }
 
     pub fn stop(&self) {
-        let _ = self.stop_tx.send(true);
+        tracing::info!("Field config loader stopped (refresh handled by cron)");
     }
 }
 

@@ -202,7 +202,12 @@ impl WpsClient {
             }
 
             if attempt < MAX_ATTEMPTS {
-                sleep(RETRY_DELAY).await;
+                tokio::select! {
+                    _ = sleep(RETRY_DELAY) => {}
+                    _ = tokio::signal::ctrl_c() => {
+                        return Err(anyhow::anyhow!("context cancelled, aborting WPS retries"));
+                    }
+                }
             }
         }
 
@@ -229,12 +234,19 @@ async fn read_body(resp: reqwest::Response) -> Result<bytes::Bytes> {
     let status = resp.status();
 
     if status.as_u16() != 200 {
-        let _discard = resp.bytes().await;
         return Err(WpsHttpError {
             body: format!("unexpected status code: {}", status.as_u16()),
             status: status.as_u16(),
         }
         .into());
+    }
+
+    if let Some(cl) = resp.content_length() {
+        if cl > MAX_RESPONSE_SIZE as u64 {
+            return Err(anyhow::anyhow!(
+                "WPS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+            ));
+        }
     }
 
     let full = resp

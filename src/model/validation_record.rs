@@ -1,5 +1,5 @@
 /// Mirrors Go's `internal/model/validation_record.go`.
-use chrono::{DateTime, Utc};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -16,7 +16,7 @@ pub struct ValidationRecord {
     pub score: i32,
     /// JSON-encoded map of QA answers.
     pub qas: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: NaiveDateTime,
 }
 
 /// Per-question answer + score stored in the QAS CLOB.

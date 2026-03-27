@@ -49,14 +49,15 @@ use crate::{
 /// Holds all runtime components in dependency order.
 /// Mirrors Go's `application` struct in `cmd/api/main.go`.
 struct Application {
-    infra:              Arc<AppInfra>,
-    cron_jobs:          CommonCronJobs,
-    field_loader:       InitLoadingData,
-    uss_mapping_loader: FieldIdUssMappingLoader,
-    flight_recorder:    Option<FlightRecorder>,
-    mem_stats_handle:   memstats::StopHandle,
-    router:             axum::Router,
-    cfg:                AppConfig,
+    infra:                Arc<AppInfra>,
+    cron_jobs:            CommonCronJobs,
+    field_loader:         InitLoadingData,
+    uss_mapping_loader:   FieldIdUssMappingLoader,
+    flight_recorder:      Option<FlightRecorder>,
+    mem_stats_handle:     memstats::StopHandle,
+    oracle_monitor_stop:  tokio::sync::watch::Sender<bool>,
+    router:               axum::Router,
+    cfg:                  AppConfig,
 }
 
 impl Application {
@@ -96,7 +97,7 @@ impl Application {
             &cfg.redis.addr,
             &cfg.redis.password,
             &cfg.redis.dbs,
-        );
+        ).await;
 
         // ── Field-config loader (initial load + 30-min periodic refresh) ─────
         // Mirrors Go's `service.NewInitLoadingData(com)`.
@@ -112,6 +113,14 @@ impl Application {
             &cfg.jobs,
             infra.merchant_repo.clone(),
             infra.uss_mapping_repo.clone(),
+        );
+
+        // ── Oracle pool monitor ────────────────────────────────────────────────
+        // Mirrors Go's `oracle.Config.monitorOraclePool` goroutine.
+        let oracle_monitor_stop = crate::infra::start_oracle_pool_monitor(
+            infra.oracle_pool.clone(),
+            cfg.oracle.stats_interval,
+            "oracle-main-pool",
         );
 
         // ── Memstats background task ─────────────────────────────────────────
@@ -133,7 +142,7 @@ impl Application {
         let state  = AppState::new(Arc::new(cfg.clone()), Arc::new(player_svc));
         let router = build_router(state, cfg.timeouts.quick);
 
-        Ok(Self { infra, cron_jobs, field_loader, uss_mapping_loader, flight_recorder, mem_stats_handle, router, cfg })
+        Ok(Self { infra, cron_jobs, field_loader, uss_mapping_loader, flight_recorder, mem_stats_handle, oracle_monitor_stop, router, cfg })
     }
 
     /// Graceful shutdown in reverse dependency order.
@@ -151,9 +160,12 @@ impl Application {
         info!("USS mapping loader stopped");
 
         if let Some(fr) = self.flight_recorder {
-            fr.stop();
+            fr.stop().await;
             info!("flight recorder stopped");
         }
+
+        let _ = self.oracle_monitor_stop.send(true);
+        info!("oracle pool monitor stopped");
 
         self.mem_stats_handle.stop();
         info!("memstats task stopped");
@@ -221,7 +233,10 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
-    app.shutdown().await;
+    let timeout = std::time::Duration::from_secs(app.cfg.shutdown_timeout);
+    if tokio::time::timeout(timeout, app.shutdown()).await.is_err() {
+        tracing::warn!("graceful shutdown timed out after {}s, forcing exit", timeout.as_secs());
+    }
     Ok(())
 }
 

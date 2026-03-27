@@ -70,7 +70,7 @@ pub struct TemplateField {
     #[serde(rename = "isPlayerEditable", default)]
     pub is_player_editable: bool,
 
-    #[serde(rename = "isPlayerEditableEnabled", default)]
+    #[serde(rename = "isPlayerEditableEnabled", default, skip_serializing_if = "std::ops::Not::not")]
     pub is_player_editable_enabled: bool,
 
     // ── Required flags ────────────────────────────────────────────────────────

@@ -32,7 +32,8 @@ use tracing::{
     field::{Field, Visit},
 };
 use tracing_subscriber::{
-    EnvFilter,
+    EnvFilter, Layer,
+    filter::filter_fn,
     fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter, format},
     layer::SubscriberExt,
     registry::LookupSpan,
@@ -119,6 +120,11 @@ pub fn flush_log_buf() {
             let _ = w.flush();
         }
     }
+    if let Some(buf) = BEHAVIOR_BUF.get() {
+        if let Ok(mut w) = buf.lock() {
+            let _ = w.flush();
+        }
+    }
 }
 
 /// Best-effort flush that never blocks (uses `try_lock`).
@@ -131,6 +137,90 @@ fn flush_log_buf_nonblocking() {
             let _ = w.flush();
         }
     }
+    if let Some(buf) = BEHAVIOR_BUF.get() {
+        if let Ok(mut w) = buf.try_lock() {
+            let _ = w.flush();
+        }
+    }
+}
+
+// ── Behavior file writer ──────────────────────────────────────────────────────
+
+/// Global handle for flushing the behavior log buffer.
+static BEHAVIOR_BUF: OnceLock<Arc<Mutex<BufWriter<std::fs::File>>>> = OnceLock::new();
+
+/// Buffered file writer for behavior logs (API request logs).
+/// Mirrors Go's `getBehaviorFileWriter` + `lumberjack`.
+#[derive(Clone)]
+struct BehaviorFileWriter(Arc<Mutex<BufWriter<std::fs::File>>>);
+
+struct BehaviorBufGuard<'a>(std::sync::MutexGuard<'a, BufWriter<std::fs::File>>);
+
+impl<'a> io::Write for BehaviorBufGuard<'a> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<'a> MakeWriter<'a> for BehaviorFileWriter {
+    type Writer = BehaviorBufGuard<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        BehaviorBufGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+/// Create the behavior file writer and background flush thread.
+/// Returns `None` if behavior logging is not configured.
+fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
+    let behavior_dir = if !cfg.path_behavior.is_empty() {
+        cfg.path_behavior.clone()
+    } else if !cfg.path.is_empty() {
+        format!("{}/behavior", cfg.path)
+    } else {
+        return None;
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&behavior_dir) {
+        eprintln!("Failed to create behavior log directory {}: {}", behavior_dir, e);
+        return None;
+    }
+
+    let behavior_file_path = format!("{}/{}-behavior.log", behavior_dir, cfg.name);
+    eprintln!("Log behavior file path: {}", behavior_file_path);
+
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&behavior_file_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to open behavior log file {}: {}", behavior_file_path, e);
+            return None;
+        }
+    };
+
+    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(256 * 1024, file)));
+    BEHAVIOR_BUF.set(inner.clone()).ok();
+
+    let writer = inner.clone();
+    std::thread::Builder::new()
+        .name("behavior-log-flusher".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if let Ok(mut w) = writer.lock() {
+                let _ = w.flush();
+            }
+        })
+        .expect("failed to spawn behavior log flush thread");
+
+    Some(BehaviorFileWriter(inner))
 }
 
 // ── Exit hooks ────────────────────────────────────────────────────────────────
@@ -347,31 +437,51 @@ where
 /// | `"json"`      | [`JsonFormat`] — structured JSON, one line per event |
 /// | anything else | [`TextFormat`] — `[ts] [service] [LEVEL] [file:line] - msg \| key=val` |
 pub fn init_tracing(cfg: &LogConfig) {
-    // Publish service name for formatters.
     SERVICE_NAME.set(cfg.service_name.clone()).ok();
 
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&cfg.level));
 
     let buf_writer = init_buffered_writer(cfg);
+    let behavior_writer = init_behavior_writer(cfg);
 
+    // Main stdout layer excludes behavior events (they go to file only).
+    // Behavior file layer only captures target="behavior" events.
     if cfg.encoding == "json" {
+        let main_layer = tracing_subscriber::fmt::layer()
+            .event_format(JsonFormat)
+            .with_writer(buf_writer)
+            .with_filter(filter_fn(|meta| meta.target() != "behavior"));
+
+        let behavior_layer = behavior_writer.map(|bw| {
+            tracing_subscriber::fmt::layer()
+                .event_format(TextFormat::new(&cfg.service_name))
+                .with_writer(bw)
+                .with_filter(filter_fn(|meta| meta.target() == "behavior"))
+        });
+
         let _ = tracing_subscriber::registry()
             .with(env_filter)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .event_format(JsonFormat)
-                    .with_writer(buf_writer),
-            )
+            .with(main_layer)
+            .with(behavior_layer)
             .try_init();
     } else {
+        let main_layer = tracing_subscriber::fmt::layer()
+            .event_format(TextFormat::new(&cfg.service_name))
+            .with_writer(buf_writer)
+            .with_filter(filter_fn(|meta| meta.target() != "behavior"));
+
+        let behavior_layer = behavior_writer.map(|bw| {
+            tracing_subscriber::fmt::layer()
+                .event_format(TextFormat::new(&cfg.service_name))
+                .with_writer(bw)
+                .with_filter(filter_fn(|meta| meta.target() == "behavior"))
+        });
+
         let _ = tracing_subscriber::registry()
             .with(env_filter)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .event_format(TextFormat::new(&cfg.service_name))
-                    .with_writer(buf_writer),
-            )
+            .with(main_layer)
+            .with(behavior_layer)
             .try_init();
     }
 

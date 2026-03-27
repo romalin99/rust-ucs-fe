@@ -27,7 +27,7 @@ pub struct AppTimeouts {
 
 impl Default for AppTimeouts {
     fn default() -> Self {
-        Self { quick: 5, normal: 15, long: 60, upload: 120 }
+        Self { quick: 5, normal: 30, long: 60, upload: 120 }
     }
 }
 
@@ -117,10 +117,10 @@ pub struct OracleConfig {
     #[serde(default)]
     pub pool_min:       u32,
     /// Maximum open connections (TOML key: `max_open_conn`).
-    #[serde(default = "default_100", alias = "maxOpenConn")]
+    #[serde(default = "default_1000", alias = "maxOpenConn")]
     pub max_open_conn:  u32,
     /// Maximum idle connections (TOML key: `max_idle_conn`).
-    #[serde(default = "default_100", alias = "maxIdleConn")]
+    #[serde(default = "default_1000", alias = "maxIdleConn")]
     pub max_idle_conn:  u32,
     /// Connection max lifetime in seconds (TOML key: `max_life_time`).
     #[serde(default = "default_30_u64", alias = "maxLifeTime")]
@@ -262,8 +262,8 @@ pub struct LogConfig {
     #[serde(default = "default_30_u32", rename = "bufferSize")]
     pub buffer_size:  u32,
 
-    /// Buffer flush interval in ms (default 10).
-    #[serde(default = "default_10_u32", rename = "bufferFlushInterval")]
+    /// Buffer flush interval in ms (default 50, matching Go).
+    #[serde(default = "default_50_u32", rename = "bufferFlushInterval")]
     pub buffer_flush_interval: u32,
 
     /// Runtime environment tag (e.g. `"pro"` | `"dev"`).
@@ -273,6 +273,11 @@ pub struct LogConfig {
     /// Deprecated alias for `path`.
     #[serde(default)]
     pub output_path:  String,
+
+    /// Behavior log directory (mirrors Go's `FileInfo.PathBehavior`).
+    /// If empty, defaults to `"{path}/behavior"` when `path` is non-empty.
+    #[serde(default, alias = "pathBehavior")]
+    pub path_behavior: String,
 }
 
 impl Default for LogConfig {
@@ -292,9 +297,10 @@ impl Default for LogConfig {
             compress:               true,
             stat:                   true,
             buffer_size:            30,
-            buffer_flush_interval:  10,
+            buffer_flush_interval:  50,
             env:                    "pro".into(),
             output_path:            String::new(),
+            path_behavior:          String::new(),
         }
     }
 }
@@ -385,11 +391,11 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             name:                "ucs-fe".into(),
-            env:                 "dev".into(),
+            env:                 "prod".into(),
             host:                "0.0.0.0".into(),
             port:                7009,
             timeout:             30,
-            body_limit:          4 * 1024 * 1024,
+            body_limit:          10_485_760 * 5,
             shutdown_timeout:    30,
             timeouts:            AppTimeouts::default(),
             oracle:              OracleConfig::default(),
@@ -459,9 +465,9 @@ impl AppConfig {
         Ok(cfg)
     }
 
-    /// Load config for the `ENV` environment variable, defaulting to `"dev"`.
+    /// Load config for the `ENV` environment variable, defaulting to `"prod"` (matching Go).
     pub fn load() -> anyhow::Result<Self> {
-        let env = std::env::var("ENV").unwrap_or_else(|_| "dev".to_string());
+        let env = std::env::var("ENV").unwrap_or_else(|_| "prod".to_string());
         Self::load_for_env(&env)
     }
 }
@@ -488,7 +494,7 @@ fn default_300()        -> u64    { 300 }
 fn default_30_u64()     -> u64    { 30 }
 fn default_60_u64()     -> u64    { 60 }
 fn default_15_u64()     -> u64    { 15 }
-fn default_100()        -> u32    { 100 }
+fn default_1000()       -> u32    { 1000 }
 fn default_info_str()   -> String { "info".into() }
 fn default_json_str()   -> String { "json".into() }
 fn default_log_name()   -> String { "tcg-ucs-fe".into() }
@@ -502,6 +508,7 @@ fn default_5()          -> u32    { 5 }
 fn default_true()       -> bool   { true }
 fn default_30_u32()     -> u32    { 30 }
 fn default_10_u32()     -> u32    { 10 }
+fn default_50_u32()     -> u32    { 50 }
 
 /// Loads Oracle credentials from AWS Secrets Manager based on `env`.
 pub async fn load_oracle_from_aws(env: &str) -> anyhow::Result<OracleConnectInfo> {

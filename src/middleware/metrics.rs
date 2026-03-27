@@ -80,8 +80,7 @@ static ACTIVE_REQUESTS: Lazy<GaugeVec> = Lazy::new(|| {
 
 // ── Skip paths (mirrors Go's prometheus.go configuration) ─────────────────────
 
-const SKIP_PATHS: &[&str] = &["/ping", "/swagger", "/favicon.ico", "/metrics", "/monitor",
-                                "/livez", "/readyz"];
+const SKIP_PATHS: &[&str] = &["/ping", "/swagger", "/favicon.ico", "/metrics", "/monitor"];
 
 const IGNORE_STATUS_CODES: &[u16] = &[401, 403, 404];
 
@@ -91,15 +90,21 @@ const IGNORE_STATUS_CODES: &[u16] = &[401, 403, 404];
 ///
 /// Mirrors Go's `FiberPrometheus.Middleware`.
 pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
-    let path   = req.uri().path().to_string();
-    let method = req.method().to_string();
+    let raw_path = req.uri().path().to_string();
+    let method   = req.method().to_string();
 
-    if SKIP_PATHS.iter().any(|p| path.contains(p)) {
+    if SKIP_PATHS.contains(&raw_path.as_str()) {
         return next.run(req).await;
     }
 
+    let matched = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| raw_path.clone());
+
     ACTIVE_REQUESTS
-        .with_label_values(&[&method, &path])
+        .with_label_values(&[&method, &matched])
         .inc();
 
     let start = Instant::now();
@@ -112,7 +117,7 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
     let response = next.run(req).await;
 
     ACTIVE_REQUESTS
-        .with_label_values(&[&method, &path])
+        .with_label_values(&[&method, &matched])
         .dec();
 
     let status_code = response.status().as_u16();
@@ -123,7 +128,7 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
 
     let duration = start.elapsed().as_secs_f64();
     let status   = status_code.to_string();
-    let labels   = [method.as_str(), path.as_str(), status.as_str()];
+    let labels   = [method.as_str(), matched.as_str(), status.as_str()];
 
     let response_size = response.headers()
         .get(axum::http::header::CONTENT_LENGTH)

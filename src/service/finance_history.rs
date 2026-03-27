@@ -57,7 +57,7 @@ pub static HISTORY_SETTERS: &[FhFieldSetter] = &[
         field_id: "LAST_DEPOSIT_TIME",
         apply: |r, v, acc| {
             r.verify_player_history_info.last_deposit_time = v;
-            r.verify_player_history_info.last_deposit_time_range_in_day = acc.parse().unwrap_or(0);
+            r.verify_player_history_info.last_deposit_time_range_in_day = acc.trim().parse().unwrap_or(0);
         },
     },
     FhFieldSetter {
@@ -75,7 +75,7 @@ pub static HISTORY_SETTERS: &[FhFieldSetter] = &[
         field_id: "LAST_WITHDRAWAL_TIME",
         apply: |r, v, acc| {
             r.verify_player_history_info.last_withdraw_time = v;
-            r.verify_player_history_info.last_withdraw_time_range_in_day = acc.parse().unwrap_or(0);
+            r.verify_player_history_info.last_withdraw_time_range_in_day = acc.trim().parse().unwrap_or(0);
         },
     },
     FhFieldSetter {

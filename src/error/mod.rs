@@ -166,6 +166,9 @@ pub enum AppError {
     #[error("customer fetch failed: {0}")]
     CustomerFetchFailed(String),
 
+    #[error("customer personal info fetch failed: {0}")]
+    CustomerPersonalInfoFetchFailed(String),
+
     #[error("question retry limit exceeded")]
     QuestionLimitExceeded,
 

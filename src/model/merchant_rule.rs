@@ -1,4 +1,6 @@
 /// Mirrors Go's `internal/model/merchant_rule.go`.
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +21,8 @@ pub struct MerchantRule {
     pub questions_json: Option<String>,
     /// Raw JSON CLOB for template fields.
     pub template_fields_json: Option<String>,
+    /// Raw JSON CLOB for per-language field translations.
+    pub field_translations: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -38,6 +42,8 @@ pub struct MerchantRuleConfig {
     pub account_retry_limit: i32,
     /// Raw JSON CLOB from DB — parsed on demand, matching Go.
     pub questions_json: Option<String>,
+    /// Raw JSON CLOB for per-language field translations.
+    pub field_translations: Option<String>,
 }
 
 impl MerchantRuleConfig {
@@ -98,4 +104,107 @@ pub struct QuestionInfo {
 /// Mirrors Go's `omitempty` for slices: skip when None OR empty.
 fn is_dropdown_empty(v: &Option<Vec<crate::model::template::DropdownItem>>) -> bool {
     v.as_ref().map_or(true, |list| list.is_empty())
+}
+
+/// Single translation entry for a field ID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldIdTranslation {
+    #[serde(rename = "fieldId")]
+    pub field_id: String,
+    #[serde(rename = "fieldTranslation")]
+    pub field_translation: String,
+}
+
+/// Map from language code → list of field translations.
+/// JSON structure: { "EN": [{fieldId, fieldTranslation}, ...], "ZH": [...] }
+pub type FieldTranslationsMap = HashMap<String, Vec<FieldIdTranslation>>;
+
+impl MerchantRule {
+    /// Parse QUESTIONS CLOB into a map keyed by fieldId.
+    /// Mirrors Go's `(m *MerchantRule) ParseQuestions()`.
+    pub fn parse_questions(&self) -> anyhow::Result<HashMap<String, Question>> {
+        let raw = self.questions_json.as_deref().unwrap_or("");
+        if raw.is_empty() {
+            anyhow::bail!("questions field is empty");
+        }
+        let map: HashMap<String, Question> = serde_json::from_str(raw)
+            .map_err(|e| anyhow::anyhow!("unmarshal questions failed: {e}"))?;
+        Ok(map)
+    }
+
+    /// Returns only questions with `valid == true`.
+    /// Mirrors Go's `(m *MerchantRule) ParseValidQuestions()`.
+    pub fn parse_valid_questions(&self) -> anyhow::Result<HashMap<String, Question>> {
+        let all = self.parse_questions()?;
+        Ok(all.into_iter().filter(|(_, q)| q.valid).collect())
+    }
+
+    /// Returns sorted `QuestionInfo` list for all valid, non-empty-fieldId questions.
+    /// Mirrors Go's `(m *MerchantRule) GetValidQuestionInfos()`.
+    pub fn get_valid_question_infos(&self) -> anyhow::Result<Vec<QuestionInfo>> {
+        let all = self.parse_questions()?;
+        let mut result: Vec<QuestionInfo> = all
+            .into_values()
+            .filter(|q| q.valid && !q.field_id.is_empty())
+            .map(|q| QuestionInfo {
+                field_id: q.field_id,
+                field_name: q.field_name,
+                field_attribute: q.field_attribute,
+                field_type: q.field_type,
+                field_dropdown_list: None,
+            })
+            .collect();
+        result.sort_by(|a, b| a.field_id.cmp(&b.field_id));
+        Ok(result)
+    }
+
+    /// Serializes a question map back into the QUESTIONS CLOB field.
+    /// Mirrors Go's `(m *MerchantRule) MarshalQuestions(questions)`.
+    pub fn marshal_questions(&mut self, questions: &HashMap<String, Question>) -> anyhow::Result<()> {
+        let json = serde_json::to_string(questions)
+            .map_err(|e| anyhow::anyhow!("marshal questions failed: {e}"))?;
+        self.questions_json = Some(json);
+        Ok(())
+    }
+
+    pub fn parse_field_translations_map(&self) -> FieldTranslationsMap {
+        let raw = self.field_translations.as_deref().unwrap_or("");
+        if raw.is_empty() || raw == "{}" {
+            return HashMap::new();
+        }
+        serde_json::from_str(raw).unwrap_or_default()
+    }
+
+    /// Returns fieldId → fieldTranslation map for the requested language.
+    /// Falls back to "EN" if language not found. Returns empty map on error.
+    pub fn get_translations_by_language(&self, language: &str) -> HashMap<String, String> {
+        let start = std::time::Instant::now();
+        let raw = self.field_translations.as_deref().unwrap_or("");
+        if raw.is_empty() || raw == "{}" {
+            tracing::info!(language, fields = 0, elapsed_ms = 0, "GetTranslationsByLanguage (empty CLOB)");
+            return HashMap::new();
+        }
+        let parsed: Result<HashMap<String, serde_json::Value>, _> = serde_json::from_str(raw);
+        let all = match parsed {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage unmarshal failed");
+                return HashMap::new();
+            }
+        };
+        let (data, fallback) = match all.get(language) {
+            Some(v) => (v.clone(), ""),
+            None => match all.get("EN") {
+                Some(v) => (v.clone(), " (fallback to EN)"),
+                None => {
+                    tracing::info!(language, fallback = " (no EN fallback)", fields = 0, elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage");
+                    return HashMap::new();
+                }
+            }
+        };
+        let list: Vec<FieldIdTranslation> = serde_json::from_value(data).unwrap_or_default();
+        let result: HashMap<String, String> = list.into_iter().map(|t| (t.field_id, t.field_translation)).collect();
+        tracing::info!(language, fallback, fields = result.len(), elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage");
+        result
+    }
 }

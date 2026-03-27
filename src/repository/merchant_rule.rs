@@ -189,11 +189,12 @@ pub async fn ping_pool(pool: Arc<OraclePool>, warm_count: usize) {
 
 // ── Repository ────────────────────────────────────────────────────────────────
 
-/// SELECT columns (includes TEMPLATE_FIELDS) used by all query methods.
+/// SELECT columns (includes TEMPLATE_FIELDS, FIELD_TRANSLATIONS) used by all query methods.
 const RULE_COLS_FULL: &str = "ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
                                IP_RETRY_LIMIT, ACCOUNT_RETRY_LIMIT, EMPTY_SCORE, \
                                LOCK_HOUR, BINDING_TYPE, PASSING_SCORE, \
-                               QUESTIONS, TEMPLATE_FIELDS, CREATED_AT, UPDATED_AT";
+                               QUESTIONS, TEMPLATE_FIELDS, FIELD_TRANSLATIONS, \
+                               CREATED_AT, UPDATED_AT";
 
 #[derive(Clone)]
 pub struct MerchantRuleRepository {
@@ -211,7 +212,7 @@ impl MerchantRuleRepository {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    /// Map a result row (14 columns: RULE_COLS_FULL) into a [`MerchantRule`].
+    /// Map a result row (15 columns: RULE_COLS_FULL) into a [`MerchantRule`].
     fn map_full_row(row: oracle::Row) -> Result<MerchantRule> {
         Ok(MerchantRule {
             id:                   row.get::<_, i64>(0).context("ID")?,
@@ -226,8 +227,13 @@ impl MerchantRuleRepository {
             passing_score:        row.get::<_, i32>(9).context("PASSING_SCORE")?,
             questions_json:       row.get::<_, Option<String>>(10).context("QUESTIONS")?,
             template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
-            created_at:           None,
-            updated_at:           None,
+            field_translations:   row.get::<_, Option<String>>(12).unwrap_or_default(),
+            created_at: row.get::<_, Option<chrono::NaiveDateTime>>(13)
+                .unwrap_or_default()
+                .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
+            updated_at: row.get::<_, Option<chrono::NaiveDateTime>>(14)
+                .unwrap_or_default()
+                .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
         })
     }
 
@@ -326,6 +332,7 @@ impl MerchantRuleRepository {
                 ip_retry_limit:      r.ip_retry_limit,
                 account_retry_limit: r.account_retry_limit,
                 questions_json:      r.questions_json,
+                field_translations:  r.field_translations,
             }
         }))
     }
@@ -407,10 +414,7 @@ impl MerchantRuleRepository {
             for entry in entries {
                 let mut field_map: HashMap<String, Vec<DropdownItem>> = HashMap::new();
                 for f in entry.tf {
-                    if f.field_attribute == "DD"
-                        && !f.field_id.is_empty()
-                        && !f.dropdown_list.is_empty()
-                    {
+                    if f.field_attribute == "DD" && !f.field_id.is_empty() {
                         field_map.insert(f.field_id, f.dropdown_list);
                     }
                 }
@@ -479,10 +483,7 @@ impl MerchantRuleRepository {
 
             let mut field_map: HashMap<String, Vec<DropdownItem>> = HashMap::new();
             for f in fields {
-                if f.field_attribute == "DD"
-                    && !f.field_id.is_empty()
-                    && !f.dropdown_list.is_empty()
-                {
+                if f.field_attribute == "DD" && !f.field_id.is_empty() {
                     field_map.insert(f.field_id, f.dropdown_list);
                 }
             }
@@ -547,7 +548,8 @@ impl MerchantRuleRepository {
     ///   0:ID 1:IS_DEFAULT 2:MERCHANT_CODE 3:OPERATOR
     ///   4:IP_RETRY_LIMIT 5:ACCOUNT_RETRY_LIMIT 6:EMPTY_SCORE
     ///   7:LOCK_HOUR 8:BINDING_TYPE 9:PASSING_SCORE
-    ///   10:QUESTIONS 11:TEMPLATE_FIELDS 12:CREATED_AT 13:UPDATED_AT
+    ///   10:QUESTIONS 11:TEMPLATE_FIELDS 12:FIELD_TRANSLATIONS
+    ///   13:CREATED_AT 14:UPDATED_AT
     fn map_rule_row(row: oracle::Row) -> anyhow::Result<MerchantRule> {
         Ok(MerchantRule {
             id:                   row.get::<_, i64>(0).context("ID")?,
@@ -562,10 +564,11 @@ impl MerchantRuleRepository {
             passing_score:        row.get::<_, i32>(9).unwrap_or(0),
             questions_json:       row.get::<_, Option<String>>(10).context("QUESTIONS")?,
             template_fields_json: row.get::<_, Option<String>>(11).unwrap_or_default(),
-            created_at:           row.get::<_, Option<chrono::NaiveDateTime>>(12)
+            field_translations:   row.get::<_, Option<String>>(12).unwrap_or_default(),
+            created_at:           row.get::<_, Option<chrono::NaiveDateTime>>(13)
                 .unwrap_or_default()
                 .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
-            updated_at:           row.get::<_, Option<chrono::NaiveDateTime>>(13)
+            updated_at:           row.get::<_, Option<chrono::NaiveDateTime>>(14)
                 .unwrap_or_default()
                 .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc)),
         })
@@ -641,10 +644,14 @@ impl MerchantRuleRepository {
                         (ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
                          IP_RETRY_LIMIT, ACCOUNT_RETRY_LIMIT, EMPTY_SCORE, \
                          LOCK_HOUR, BINDING_TYPE, PASSING_SCORE, QUESTIONS, \
+                         TEMPLATE_FIELDS, FIELD_TRANSLATIONS, \
                          CREATED_AT, UPDATED_AT) \
                        VALUES \
                         (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, \
-                         SYSTIMESTAMP, SYSTIMESTAMP)";
+                         :12, :13, SYSTIMESTAMP, SYSTIMESTAMP)";
+
+            let tpl  = rule.template_fields_json.as_deref().unwrap_or("[]");
+            let ft   = rule.field_translations.as_deref().unwrap_or("{}");
 
             conn.execute(sql, &[
                 &new_id,
@@ -658,6 +665,8 @@ impl MerchantRuleRepository {
                 &rule.binding_type,
                 &rule.passing_score,
                 &rule.questions_json,
+                &tpl,
+                &ft,
             ]).context("MerchantRule INSERT execute")?;
 
             conn.commit().context("MerchantRule INSERT commit")?;
@@ -689,8 +698,11 @@ impl MerchantRuleRepository {
                             BINDING_TYPE        = :8, \
                             PASSING_SCORE       = :9, \
                             QUESTIONS           = :10, \
+                            FIELD_TRANSLATIONS  = :11, \
                             UPDATED_AT          = SYSTIMESTAMP \
-                        WHERE ID = :11";
+                        WHERE ID = :12";
+
+            let ft = rule.field_translations.as_deref().unwrap_or("{}");
 
             let stmt = conn.execute(sql, &[
                 &rule.is_default,
@@ -703,6 +715,7 @@ impl MerchantRuleRepository {
                 &rule.binding_type,
                 &rule.passing_score,
                 &rule.questions_json,
+                &ft,
                 &id,
             ]).context("MerchantRule UPDATE execute")?;
 
