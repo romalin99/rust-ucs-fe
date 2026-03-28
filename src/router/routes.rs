@@ -140,16 +140,23 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         .route("/verification/materials", post(handler::submit_verify_materials))
         .layer(GovernorLayer::new(path_cfg));
 
-    // Example / test routes — mirrors Go's `RegisterExamplesHandlers`.
+    let api_router = Router::new()
+        .merge(ping_router)
+        .merge(questions_router)
+        .merge(materials_router)
+        .layer(GovernorLayer::new(global_cfg));
+
+    // ── Example / test routes — mirrors Go's `RegisterExamplesHandlers` ──────
+    //
+    // These are root-level routes (NOT nested under /tcg-ucs-fe):
+    //   /test/quick, /test/normal, /test/long, /test/upload
+    //   /api/quick, /api/normal, /api/upload, /api/ping
+    //   /healthv2 (already in system_router)
     let normal_timeout_secs = state.config.timeouts.normal;
     let long_timeout_secs = state.config.timeouts.long;
     let upload_timeout_secs = state.config.timeouts.upload;
-    let example_router = Router::new()
-        .route("/pong", get(handler::pong))
-        .route("/hello", get(handler::hello))
-        .route("/health", get(handler::health))
-        .route("/healthz", get(handler::health_check))
-        .route("/monitor", get(handler::monitor))
+
+    let test_router = Router::new()
         .route("/test/quick", get(handler::quick).layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(quick_timeout_secs),
@@ -162,22 +169,28 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(long_timeout_secs),
         )))
-        .route("/test/timeout", get(handler::timeout_handler))
-        .route("/upload", post(handler::upload).layer(TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(upload_timeout_secs),
-        )))
-        .route("/upload/v2", post(handler::upload_v2).layer(TimeoutLayer::with_status_code(
+        .route("/test/upload", post(handler::upload).layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(upload_timeout_secs),
         )));
 
-    let api_router = Router::new()
-        .merge(ping_router)
-        .merge(questions_router)
-        .merge(materials_router)
-        .merge(example_router)
-        .layer(GovernorLayer::new(global_cfg));
+    let api_example_router = Router::new()
+        .route("/api/quick", get(handler::quick).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(quick_timeout_secs),
+        )))
+        .route("/api/normal", get(handler::normal).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(normal_timeout_secs),
+        )))
+        .route("/api/upload", post(handler::upload).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(upload_timeout_secs),
+        )))
+        .route("/api/ping", get(handler::pong).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(quick_timeout_secs),
+        )));
 
     let body_limit = state.config.body_limit;
 
@@ -188,6 +201,8 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
 
     let mut base = Router::new()
         .merge(system_router)
+        .merge(test_router)
+        .merge(api_example_router)
         .nest("/tcg-ucs-fe", api_router)
         .layer(
             ServiceBuilder::new()
