@@ -379,24 +379,27 @@ impl McsClient {
         &self,
         url: &str,
         headers: &PlayerHeaders,
-        body_bytes: &[u8],
+        body_bytes: bytes::Bytes,
     ) -> Result<bytes::Bytes> {
-        self.do_with_retry(url, || async {
-            let resp = self
-                .inner
-                .post(url)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .header("CustomerId", &headers.customer_id)
-                .header("CustomerName", &headers.customer_name)
-                .header("Merchant", &headers.merchant)
-                .header("CustomerIP", &headers.customer_ip)
-                .body(body_bytes.to_vec())
-                .send()
-                .await
-                .with_context(|| format!("MCS POST failed: {url}"))?;
+        self.do_with_retry(url, || {
+            let body = body_bytes.clone(); // O(1) Arc increment per retry
+            async move {
+                let resp = self
+                    .inner
+                    .post(url)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .header("CustomerId", &headers.customer_id)
+                    .header("CustomerName", &headers.customer_name)
+                    .header("Merchant", &headers.merchant)
+                    .header("CustomerIP", &headers.customer_ip)
+                    .body(body)
+                    .send()
+                    .await
+                    .with_context(|| format!("MCS POST failed: {url}"))?;
 
-            read_body(resp).await
+                read_body(resp).await
+            }
         })
         .await
     }
@@ -421,16 +424,17 @@ impl McsClient {
 
         let req_body = serde_json::to_vec(req)
             .with_context(|| format!("{OP}: marshal request body failed"))?;
+        let body_bytes = bytes::Bytes::from(req_body);
 
         tracing::info!(
             url = %url,
             headers = %headers,
-            req_body = %String::from_utf8_lossy(&req_body),
+            req_body = %String::from_utf8_lossy(&body_bytes),
             "[MCSClient] VerifyPlayerInfo request"
         );
 
         let resp_body = self
-            .player_post(&url, headers, &req_body)
+            .player_post(&url, headers, body_bytes)
             .await
             .map_err(|e| {
                 tracing::warn!(

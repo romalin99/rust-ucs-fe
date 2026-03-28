@@ -16,6 +16,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::app_state::AppState;
@@ -74,19 +75,28 @@ pub async fn get_question_list(
 
     tracing::info!(
         "request: merchant={} ip={} customerName={}",
-        merchant_code, customer_ip, params.customer_name
+        merchant_code,
+        customer_ip,
+        params.customer_name
     );
 
     // ── Dispatch to service ───────────────────────────────────────────────────
     match state
         .verification_svc
-        .get_question_list(&merchant_code, &customer_ip, &params.customer_name, &language)
+        .get_question_list(
+            &merchant_code,
+            &customer_ip,
+            &params.customer_name,
+            &language,
+        )
         .await
     {
         Ok(result) => {
             tracing::info!(
                 "success: merchant={}, customerName={}, questions count={}",
-                merchant_code, params.customer_name, result.questions.len()
+                merchant_code,
+                params.customer_name,
+                result.questions.len()
             );
             Json(ApiSuccess::new(result)).into_response()
         }
@@ -102,7 +112,9 @@ pub async fn get_question_list(
         Err(AppError::QuestionLimitExceeded) => {
             tracing::warn!(
                 "question retry limit exhausted: merchant={} ip={} customerName={}",
-                merchant_code, customer_ip, params.customer_name
+                merchant_code,
+                customer_ip,
+                params.customer_name
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -128,7 +140,8 @@ pub async fn get_question_list(
         Err(AppError::ParseJsonFailed(ref e)) => {
             tracing::error!(
                 "failed to parse merchant rule questions: merchant={} err={}",
-                merchant_code, e
+                merchant_code,
+                e
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -141,7 +154,8 @@ pub async fn get_question_list(
         Err(AppError::WpsApiFailed(ref e)) => {
             tracing::error!(
                 "wps service unavailable: merchant={} err={}",
-                merchant_code, e
+                merchant_code,
+                e
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -154,7 +168,9 @@ pub async fn get_question_list(
         Err(AppError::CustomerFetchFailed(ref e)) => {
             tracing::error!(
                 "failed to fetch customer info: merchant={} customerName={} err={}",
-                merchant_code, params.customer_name, e
+                merchant_code,
+                params.customer_name,
+                e
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -189,7 +205,8 @@ pub async fn get_question_list(
         Err(e) => {
             tracing::error!(
                 "GetQuestionList unexpected error: merchant={} err={}",
-                merchant_code, e
+                merchant_code,
+                e
             );
             e.into_response()
         }
@@ -223,7 +240,9 @@ pub async fn submit_verify_materials(
 
     tracing::info!(
         "Received merchant={}, customerIP={}, body={:?}",
-        merchant_code, customer_ip, body
+        merchant_code,
+        customer_ip,
+        body
     );
 
     if body.data.is_empty() {
@@ -250,7 +269,8 @@ pub async fn submit_verify_materials(
         Err(AppError::ParseJsonFailed(ref e)) => {
             tracing::error!(
                 "failed to parse merchant rule: merchant={} err={}",
-                merchant_code, e
+                merchant_code,
+                e
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -275,7 +295,8 @@ pub async fn submit_verify_materials(
         Err(AppError::VerifyPlayerInfoFailed(ref e)) => {
             tracing::error!(
                 "MCS verification failed: merchant={} err={}",
-                merchant_code, e
+                merchant_code,
+                e
             );
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -293,12 +314,11 @@ pub async fn submit_verify_materials(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn extract_header(headers: &HeaderMap, name: &str) -> String {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string()
+fn extract_header<'a>(headers: &'a HeaderMap, name: &str) -> Cow<'a, str> {
+    match headers.get(name).and_then(|v| v.to_str().ok()) {
+        Some(val) => Cow::Borrowed(val),
+        None => Cow::Borrowed(""),
+    }
 }
 
 /// Build a typed error response.

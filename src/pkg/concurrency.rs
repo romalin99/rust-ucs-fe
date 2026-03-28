@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Concurrency utilities.
 ///
 /// Mirrors Go's `pkg/gos/` package:
@@ -5,7 +6,6 @@
 ///   - `lock.go`     → [`LockCounter`], [`lock_timeout`]
 ///   - `go_pool.go`  → [`TaskPool`]
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
 
 // ── Safe goroutine spawn (mirrors gos/routines.go) ────────────────────────────
 
@@ -93,27 +93,39 @@ pub fn recover_then_crash(label: &str) {
 ///
 /// Mirrors Go's `gos.LockedCount` and `gos.LockedActive`.
 pub struct LockCounter {
-    count:  AtomicI64,
+    count: AtomicI64,
     active: AtomicBool,
 }
 
 impl LockCounter {
     pub const fn new() -> Self {
         Self {
-            count:  AtomicI64::new(0),
+            count: AtomicI64::new(0),
             active: AtomicBool::new(false),
         }
     }
 
-    pub fn increment(&self) { self.count.fetch_add(1, Ordering::Release); }
-    pub fn decrement(&self) { self.count.fetch_sub(1, Ordering::Release); }
-    pub fn set_active(&self, v: bool) { self.active.store(v, Ordering::Release); }
-    pub fn load_count(&self)  -> i64  { self.count.load(Ordering::Acquire) }
-    pub fn is_active(&self)   -> bool { self.active.load(Ordering::Acquire) }
+    pub fn increment(&self) {
+        self.count.fetch_add(1, Ordering::Release);
+    }
+    pub fn decrement(&self) {
+        self.count.fetch_sub(1, Ordering::Release);
+    }
+    pub fn set_active(&self, v: bool) {
+        self.active.store(v, Ordering::Release);
+    }
+    pub fn load_count(&self) -> i64 {
+        self.count.load(Ordering::Acquire)
+    }
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
 }
 
 impl Default for LockCounter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Global lock counter — mirrors Go's `gos.LockedCount` and `gos.LockedActive`.
@@ -174,8 +186,13 @@ impl TaskPool {
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let permit = self.semaphore.clone().acquire_owned().await
-            .expect("TaskPool semaphore closed");
+        let permit = match self.semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("TaskPool: semaphore closed, dropping task");
+                return;
+            }
+        };
 
         tokio::spawn(async move {
             let _guard = permit; // released when this task completes

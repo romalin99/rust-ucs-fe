@@ -29,7 +29,8 @@ use crate::repository::{
 #[derive(Clone)]
 pub struct RedisInstance {
     pub client: Arc<redis::Client>,
-    pub ttl:    Duration,
+    pub manager: redis::aio::ConnectionManager,
+    pub ttl: Duration,
 }
 
 static REDIS_DB_MAP: OnceCell<HashMap<String, RedisInstance>> = OnceCell::new();
@@ -41,7 +42,10 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
         return;
     }
     let mut map = HashMap::with_capacity(dbs.len());
-    let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
+    let addr = cfg_addr
+        .first()
+        .map(String::as_str)
+        .unwrap_or("127.0.0.1:6379");
     for db_entry in dbs {
         let url = if cfg_password.is_empty() {
             format!("redis://{}/{}", addr, db_entry.db)
@@ -54,20 +58,29 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
                     .set_connection_timeout(Some(Duration::from_secs(10)))
                     .set_response_timeout(Some(Duration::from_secs(30)))
                     .set_number_of_retries(3);
-                match redis::aio::ConnectionManager::new_with_config(client.clone(), mgr_cfg).await {
+                match redis::aio::ConnectionManager::new_with_config(client.clone(), mgr_cfg).await
+                {
                     Ok(mut cm) => {
                         if let Err(e) = redis::cmd("PING").query_async::<String>(&mut cm).await {
                             tracing::warn!(db = db_entry.db, err = %e, "Redis PING failed (continuing)");
                         }
+                        let key = format!("dbidx:{}", db_entry.db);
+                        let ttl =
+                            Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
+                        map.insert(
+                            key,
+                            RedisInstance {
+                                client: Arc::new(client),
+                                manager: cm,
+                                ttl,
+                            },
+                        );
+                        tracing::info!(db = db_entry.db, "Redis DB instance initialised");
                     }
                     Err(e) => {
                         tracing::warn!(db = db_entry.db, err = %e, "Redis ConnectionManager init failed (continuing)");
                     }
                 }
-                let key = format!("dbidx:{}", db_entry.db);
-                let ttl = Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
-                map.insert(key, RedisInstance { client: Arc::new(client), ttl });
-                tracing::info!(db = db_entry.db, "Redis DB instance initialised");
             }
             Err(e) => tracing::error!(db = db_entry.db, err = %e, "Redis DB client failed"),
         }
@@ -83,6 +96,18 @@ pub fn get_db_instance(idx: i32) -> anyhow::Result<&'static RedisInstance> {
         .get()
         .ok_or_else(|| anyhow::anyhow!("Redis multi-DB map not initialised"))?
         .get(&key)
+        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
+}
+
+/// Clone the pre-built ConnectionManager for a given DB index.
+/// This is O(1) — `ConnectionManager` is Arc-backed.
+pub fn get_db_manager(idx: i32) -> anyhow::Result<redis::aio::ConnectionManager> {
+    let key = format!("dbidx:{}", idx);
+    REDIS_DB_MAP
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("Redis multi-DB map not initialised"))?
+        .get(&key)
+        .map(|inst| inst.manager.clone())
         .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
 }
 
@@ -104,12 +129,16 @@ pub fn close_redis_multi_db() {
 /// Background task that logs Oracle r2d2 pool stats periodically.
 /// Mirrors Go's `oracle.Config.monitorOraclePool` goroutine.
 pub fn start_oracle_pool_monitor(
-    pool:          Arc<OraclePool>,
+    pool: Arc<OraclePool>,
     interval_secs: u64,
-    desc:          &'static str,
+    desc: &'static str,
 ) -> tokio::sync::watch::Sender<bool> {
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
-    let secs = if interval_secs == 0 { 60 } else { interval_secs };
+    let secs = if interval_secs == 0 {
+        60
+    } else {
+        interval_secs
+    };
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(secs));
@@ -232,10 +261,10 @@ impl AppInfra {
             "Building Oracle connection pool"
         );
         let pool_cfg = PoolConfig {
-            max_size:               cfg.oracle.max_open_conn,
-            min_idle:               pool_min,
-            max_lifetime_secs:      cfg.oracle.max_life_time,
-            max_idle_time_mins:     cfg.oracle.max_idle_time,
+            max_size: cfg.oracle.max_open_conn,
+            min_idle: pool_min,
+            max_lifetime_secs: cfg.oracle.max_life_time,
+            max_idle_time_mins: cfg.oracle.max_idle_time,
             connection_timeout_secs: 30,
         };
         let oracle_pool = Arc::new(build_pool(

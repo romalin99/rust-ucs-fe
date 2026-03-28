@@ -13,8 +13,9 @@
 /// Skip list is identical to Go's:
 ///   `/test/`, `/metrics`, `/swagger`, `/favicon.ico`, `/health`,
 ///   `/livez`, `/readyz`, `/ping`, `/monitor`
-
-use axum::{body::Body, extract::ConnectInfo, extract::Request, middleware::Next, response::Response};
+use axum::{
+    body::Body, extract::ConnectInfo, extract::Request, middleware::Next, response::Response,
+};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
@@ -36,7 +37,7 @@ static SKIP_PATHS: &[&str] = &[
 /// wrapper functions) so that the file/line metadata points here, matching
 /// Go's `zap.AddCallerSkip(1)` which shows the middleware as caller.
 pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
-    let path   = req.uri().path().to_string();
+    let path = req.uri().path().to_string();
     let method = req.method().clone();
 
     if SKIP_PATHS.iter().any(|p| path.contains(p)) {
@@ -46,10 +47,10 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     let client_ip = extract_client_ip(&req);
     let (trace_id, span_id) = extract_trace_ids(&req);
 
-    let start    = Instant::now();
+    let start = Instant::now();
     let response = next.run(req).await;
-    let elapsed  = start.elapsed().as_millis();
-    let status   = response.status().as_u16();
+    let elapsed = start.elapsed().as_millis();
+    let status = response.status().as_u16();
 
     let msg = format!(
         "[{}/{}] [API-REQUEST] [END] URI: {}, Method: {}, Status: {}, Addr: {}, Elapsed: {}ms",
@@ -60,8 +61,8 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     // not to a wrapper function in logs.rs.
     match status {
         s if s >= 500 => tracing::error!(target: "behavior", "{}", msg),
-        400..=499     => tracing::warn!(target: "behavior", "{}", msg),
-        _             => tracing::info!(target: "behavior", "{}", msg),
+        400..=499 => tracing::warn!(target: "behavior", "{}", msg),
+        _ => tracing::info!(target: "behavior", "{}", msg),
     }
 
     response
@@ -87,7 +88,7 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
 
     // 1. Explicit X-Trace-Id / X-Span-Id headers
     let x_trace = headers.get("X-Trace-Id").and_then(|v| v.to_str().ok());
-    let x_span  = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
+    let x_span = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
     if x_trace.is_some() || x_span.is_some() {
         return (
             x_trace.unwrap_or("unknown").to_string(),
@@ -114,9 +115,10 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     // 4. Generate IDs conforming to W3C / OTel wire format so logs are
     //    consistent whether upstream propagation is present or not.
     //    trace_id = 32 hex chars, span_id = 16 hex chars.
-    let trace_id = uuid::Uuid::new_v4().simple().to_string();
-    let span_raw = uuid::Uuid::new_v4().as_u128();
-    let span_id  = format!("{:016x}", span_raw as u64);
+    let raw1 = uuid::Uuid::new_v4().as_u128();
+    let raw2 = uuid::Uuid::new_v4().as_u128();
+    let trace_id = format!("{:032x}", raw1);
+    let span_id = format!("{:016x}", raw2 as u64);
     (trace_id, span_id)
 }
 
@@ -136,8 +138,11 @@ fn extract_client_ip(req: &Request<Body>) -> String {
     if let Some(xff) = headers.get("X-Forwarded-For").and_then(|v| v.to_str().ok()) {
         for part in xff.split(',').rev() {
             let candidate = part.trim();
-            if is_public_ip(candidate) {
-                return candidate.to_string();
+            // Parse once and reuse — avoids the second parse inside is_public_ip
+            if let Ok(addr) = candidate.parse::<IpAddr>() {
+                if !addr.is_loopback() && !is_private(&addr) {
+                    return candidate.to_string();
+                }
             }
         }
     }
@@ -166,7 +171,7 @@ fn extract_client_ip(req: &Request<Body>) -> String {
 fn is_public_ip(ip: &str) -> bool {
     match ip.parse::<IpAddr>() {
         Ok(addr) => !addr.is_loopback() && !is_private(&addr),
-        Err(_)   => false,
+        Err(_) => false,
     }
 }
 

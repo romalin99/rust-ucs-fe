@@ -69,3 +69,17 @@ dashmap         = "6"
 futures         = "0.3"
 tokio-util      = "0.7"
 bytes           = "1"
+
+# ── Build profiles ─────────────────────────────────────────────────────────────
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"     # Cross-crate inlining without the full-LTO link overhead
+codegen-units = 1          # Single codegen unit for maximum inlining
+strip         = "debuginfo" # Remove debug info from binary (~30-40% smaller)
+
+[profile.dev]
+opt-level = 1              # Faster compilation with basic optimisations
+
+[profile.dev.package."*"]
+opt-level = 3              # But keep dependencies fully optimised even in dev

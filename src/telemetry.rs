@@ -22,6 +22,7 @@
 //! buffer every N ms (default 10 ms, configurable via `bufferFlushInterval`).
 
 use std::fmt;
+use std::fmt::Write as FmtWrite;
 use std::io::{self, BufWriter, Write};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -90,8 +91,17 @@ impl<'a> MakeWriter<'a> for BufferedStdout {
 
 /// Create the shared buffer and spawn the background flush thread.
 fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
+    // Guard against multiple initialization — subsequent calls reuse the
+    // existing buffer without spawning additional flush threads.
+    if let Some(existing) = LOG_BUF.get() {
+        return BufferedStdout(existing.clone());
+    }
+
     let cap_bytes = (cfg.buffer_size.max(1) as usize) * 1024 * 1024;
-    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(cap_bytes, io::stdout())));
+    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(
+        cap_bytes,
+        io::stdout(),
+    )));
 
     LOG_BUF.set(inner.clone()).ok();
 
@@ -100,10 +110,18 @@ fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
     let writer = inner.clone();
     std::thread::Builder::new()
         .name("log-flusher".into())
-        .spawn(move || loop {
-            std::thread::sleep(flush_interval);
-            if let Ok(mut w) = writer.lock() {
-                let _ = w.flush();
+        .spawn(move || {
+            loop {
+                std::thread::sleep(flush_interval);
+                // try_lock: if a writer currently holds the mutex, skip this flush
+                // cycle rather than blocking all subsequent writers behind us.
+                let mut guard = match writer.try_lock() {
+                    Ok(g) => g,
+                    Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+                    Err(std::sync::TryLockError::WouldBlock) => continue,
+                };
+                let _ = guard.flush();
+                // guard is dropped here, releasing the lock immediately
             }
         })
         .expect("failed to spawn log flush thread");
@@ -178,6 +196,12 @@ impl<'a> MakeWriter<'a> for BehaviorFileWriter {
 /// Create the behavior file writer and background flush thread.
 /// Returns `None` if behavior logging is not configured.
 fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
+    // Guard against multiple initialization — subsequent calls reuse the
+    // existing buffer without spawning additional flush threads.
+    if let Some(existing) = BEHAVIOR_BUF.get() {
+        return Some(BehaviorFileWriter(existing.clone()));
+    }
+
     let behavior_dir = if !cfg.path_behavior.is_empty() {
         cfg.path_behavior.clone()
     } else if !cfg.path.is_empty() {
@@ -187,7 +211,10 @@ fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
     };
 
     if let Err(e) = std::fs::create_dir_all(&behavior_dir) {
-        eprintln!("Failed to create behavior log directory {}: {}", behavior_dir, e);
+        eprintln!(
+            "Failed to create behavior log directory {}: {}",
+            behavior_dir, e
+        );
         return None;
     }
 
@@ -201,7 +228,10 @@ fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to open behavior log file {}: {}", behavior_file_path, e);
+            eprintln!(
+                "Failed to open behavior log file {}: {}",
+                behavior_file_path, e
+            );
             return None;
         }
     };
@@ -212,10 +242,18 @@ fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
     let writer = inner.clone();
     std::thread::Builder::new()
         .name("behavior-log-flusher".into())
-        .spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            if let Ok(mut w) = writer.lock() {
-                let _ = w.flush();
+        .spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                // try_lock: if a writer currently holds the mutex, skip this flush
+                // cycle rather than blocking all subsequent writers behind us.
+                let mut guard = match writer.try_lock() {
+                    Ok(g) => g,
+                    Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+                    Err(std::sync::TryLockError::WouldBlock) => continue,
+                };
+                let _ = guard.flush();
+                // guard is dropped here, releasing the lock immediately
             }
         })
         .expect("failed to spawn behavior log flush thread");
@@ -270,10 +308,12 @@ impl Visit for FieldCollector {
         self.0.insert(field.name().to_owned(), value.into());
     }
     fn record_i128(&mut self, field: &Field, value: i128) {
-        self.0.insert(field.name().to_owned(), value.to_string().into());
+        self.0
+            .insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_u128(&mut self, field: &Field, value: u128) {
-        self.0.insert(field.name().to_owned(), value.to_string().into());
+        self.0
+            .insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
         self.0.insert(field.name().to_owned(), value.into());
@@ -282,10 +322,12 @@ impl Visit for FieldCollector {
         self.0.insert(field.name().to_owned(), value.into());
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        self.0.insert(field.name().to_owned(), value.to_string().into());
+        self.0
+            .insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.0.insert(field.name().to_owned(), format!("{value:?}").into());
+        self.0
+            .insert(field.name().to_owned(), format!("{value:?}").into());
     }
 }
 
@@ -315,7 +357,7 @@ where
     ) -> fmt::Result {
         let meta = event.metadata();
 
-        let mut collector = FieldCollector(Map::new());
+        let mut collector = FieldCollector(Map::with_capacity(8));
         event.record(&mut collector);
 
         // Promote "message" to top-level.
@@ -325,7 +367,9 @@ where
             .unwrap_or(Value::String(String::new()));
 
         // "file_line" = "src/foo.rs:42" (same shape as Go's ShortCallerEncoder)
-        let file_line = format!(
+        let mut file_line = String::with_capacity(48);
+        let _ = write!(
+            &mut file_line,
             "{}:{}",
             meta.file().unwrap_or("<unknown>"),
             meta.line().unwrap_or(0),
@@ -333,12 +377,19 @@ where
 
         let now = chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
-        let mut entry: Map<String, Value> = Map::new();
-        entry.insert("time".into(),      now.into());
-        entry.insert("level".into(),     meta.level().to_string().into());
-        entry.insert("service".into(),   service_name().into());
+        let mut entry: Map<String, Value> = Map::with_capacity(5 + collector.0.len());
+        entry.insert("time".into(), now.into());
+        let level_str: &'static str = match *meta.level() {
+            tracing::Level::ERROR => "ERROR",
+            tracing::Level::WARN => "WARN",
+            tracing::Level::INFO => "INFO",
+            tracing::Level::DEBUG => "DEBUG",
+            tracing::Level::TRACE => "TRACE",
+        };
+        entry.insert("level".into(), level_str.into());
+        entry.insert("service".into(), service_name().into());
         entry.insert("file_line".into(), file_line.into());
-        entry.insert("message".into(),   message);
+        entry.insert("message".into(), message);
         entry.extend(collector.0); // remaining structured fields
 
         writeln!(writer, "{}", Value::Object(entry))
@@ -363,7 +414,9 @@ pub struct TextFormat {
 
 impl TextFormat {
     pub fn new(service_name: impl Into<String>) -> Self {
-        Self { service_name: service_name.into() }
+        Self {
+            service_name: service_name.into(),
+        }
     }
 }
 
@@ -380,7 +433,7 @@ where
     ) -> fmt::Result {
         let meta = event.metadata();
 
-        let mut collector = FieldCollector(Map::new());
+        let mut collector = FieldCollector(Map::with_capacity(8));
         event.record(&mut collector);
 
         // Promote "message".
@@ -401,11 +454,20 @@ where
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
 
         // Level is left-padded to 5 characters (matches `%-5s` in Go's fmt.Fprintf).
-        let level = format!("{:<5}", meta.level().to_string().to_uppercase());
+        let level: &'static str = match *meta.level() {
+            tracing::Level::ERROR => "ERROR",
+            tracing::Level::WARN => "WARN ",
+            tracing::Level::INFO => "INFO ",
+            tracing::Level::DEBUG => "DEBUG",
+            tracing::Level::TRACE => "TRACE",
+        };
 
         // Core line: [ts] [service] [LEVEL] [file:line] - message
-        write!(writer, "[{}] [{}] [{}] [{}:{}] - {}",
-            now, self.service_name, level, file, line, message)?;
+        write!(
+            writer,
+            "[{}] [{}] [{}] [{}:{}] - {}",
+            now, self.service_name, level, file, line, message
+        )?;
 
         // Extra fields as `| key=val, key2=val2`
         // Mirrors Go's `encodeFields`.
@@ -439,8 +501,8 @@ where
 pub fn init_tracing(cfg: &LogConfig) {
     SERVICE_NAME.set(cfg.service_name.clone()).ok();
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&cfg.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cfg.level));
 
     let buf_writer = init_buffered_writer(cfg);
     let behavior_writer = init_behavior_writer(cfg);
