@@ -18,7 +18,11 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use tracing::warn;
+use tracing::{info, warn};
+
+/// Error codes that should be logged at Info level instead of Warn.
+/// Mirrors Go's `ignoreErrorCodes` map.
+const IGNORE_ERROR_CODES: &[&str] = &["ucs-fe.non.unknown_err"];
 
 // ── AppErrorHandlerLayer ──────────────────────────────────────────────────────
 
@@ -56,7 +60,11 @@ pub async fn error_handler(req: Request<Body>, next: Next) -> Response<Body> {
     // Replace the raw error with a standard JSON envelope.
     let (error_code, message) = map_status(status);
 
-    warn!(status = %status, error_code = %error_code, "error_handler: wrapping non-JSON error response");
+    if IGNORE_ERROR_CODES.contains(&error_code) {
+        info!(status = %status, error_code = %error_code, "error_handler: wrapping non-JSON error response");
+    } else {
+        warn!(status = %status, error_code = %error_code, "error_handler: wrapping non-JSON error response");
+    }
 
     (
         status,

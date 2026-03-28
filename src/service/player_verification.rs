@@ -102,7 +102,7 @@ return v
 /// Applies Go-equivalent timeouts: DialTimeout=10s, ReadTimeout=30s, MaxRetries=3.
 async fn get_rate_limit_redis() -> Result<redis::aio::ConnectionManager, AppError> {
     let instance = crate::infra::get_db_instance(QUESTION_LIST_REDIS_DB)
-        .map_err(|e| AppError::Internal(e))?;
+        .map_err(|_| AppError::RedisNotFound)?;
     let mgr_config = redis::aio::ConnectionManagerConfig::new()
         .set_connection_timeout(Some(std::time::Duration::from_secs(10)))
         .set_response_timeout(Some(std::time::Duration::from_secs(30)))
@@ -365,7 +365,7 @@ impl PlayerVerificationService {
             .parse_questions()
             .map_err(|e| {
                 tracing::warn!(merchant_code, error = %e, "QUESTIONS CLOB unmarshal failed");
-                AppError::Internal(anyhow::anyhow!("parse questions failed: {}", e))
+                AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code))
             })?;
 
         // 6. Score profile fields (tracking submitted IDs)
@@ -496,13 +496,13 @@ impl PlayerVerificationService {
         let raw = rule.questions_json.as_deref().unwrap_or("");
         if raw.is_empty() {
             tracing::warn!(merchant_code, "questions field is empty");
-            return Err(AppError::Internal(anyhow::anyhow!("questions field is empty")));
+            return Err(AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code)));
         }
 
         let all: std::collections::HashMap<String, Question> =
             serde_json::from_str(raw).map_err(|e| {
                 tracing::warn!(merchant_code, error = %e, "unmarshal questions failed");
-                AppError::Internal(anyhow::anyhow!("unmarshal questions failed: {}", e))
+                AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code))
             })?;
 
         let dd_map = get_field_config(merchant_code).await;
@@ -516,7 +516,6 @@ impl PlayerVerificationService {
                 dd_map
                     .as_ref()
                     .and_then(|m| m.get(q.field_id.as_str()))
-                    .filter(|v| !v.is_empty())
                     .cloned()
             } else {
                 None
@@ -652,7 +651,7 @@ fn accurate_judgment_score(
                 score = 0;
                 is_correct = false;
                 tracing::warn!(field_id = %field_id, expected = %expected_value, "bind=true empty value");
-            } else if submitted.eq_ignore_ascii_case(expected_value) {
+            } else if submitted.to_lowercase() == expected_value.to_lowercase() {
                 score = question_cfg.score;
                 is_correct = true;
                 tracing::info!(

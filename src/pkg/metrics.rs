@@ -164,6 +164,7 @@ impl KafkaMetrics {
 // ── Global singleton ─────────────────────────────────────────────────────────
 
 pub struct AppMetrics {
+    pub service_name: String,
     pub oracle: OraclePoolMetrics,
     pub redis:  RedisPoolMetrics,
     pub kafka:  KafkaMetrics,
@@ -175,10 +176,14 @@ pub static METRICS: OnceLock<AppMetrics> = OnceLock::new();
 ///
 /// Mirrors Go's `metrics.Init(serviceName)` which calls
 /// `InitDBMetrics` + `InitRedisMetrics` + `InitKafkaMetrics`.
-pub fn init(_service_name: &str) {
+/// The `service_name` is stored for const-label injection in custom dashboards.
+pub fn init(service_name: &str) {
+    let svc = service_name.to_string();
     METRICS.get_or_init(|| {
         let registry = prometheus::default_registry();
+        tracing::info!(service = %svc, "initialising Prometheus metrics");
         AppMetrics {
+            service_name: svc,
             oracle: OraclePoolMetrics::new(registry),
             redis:  RedisPoolMetrics::new(registry),
             kafka:  KafkaMetrics::new(registry),

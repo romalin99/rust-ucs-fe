@@ -171,12 +171,14 @@ fn is_public_ip(ip: &str) -> bool {
 }
 
 /// Mirrors Go 1.17+ `net.IP.IsPrivate()`.
+/// Go's IsPrivate covers RFC 1918 (10.x, 172.16-31.x, 192.168.x) and fc00::/7,
+/// but NOT link-local (169.254.x.x / fe80::/10).
 fn is_private(addr: &IpAddr) -> bool {
     match addr {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V4(v4) => v4.is_private(),
         IpAddr::V6(v6) => {
             let seg = v6.segments();
-            (seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80
+            (seg[0] & 0xfe00) == 0xfc00
         }
     }
 }

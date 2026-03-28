@@ -37,7 +37,7 @@ use tower_http::{cors::CorsLayer, timeout::TimeoutLayer};
 
 pub use crate::app_state::AppState;
 use crate::handler;
-use crate::middleware::{RecoverLayer, behavior_logger, error_handler, prometheus_metrics};
+use crate::middleware::{RecoverLayer, behavior_logger, error_handler, otel_trace, prometheus_metrics};
 use crate::router::swagger;
 
 // ── Custom key extractor: request path ────────────────────────────────────────
@@ -140,10 +140,43 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         .route("/verification/materials", post(handler::submit_verify_materials))
         .layer(GovernorLayer::new(path_cfg));
 
+    // Example / test routes — mirrors Go's `RegisterExamplesHandlers`.
+    let normal_timeout_secs = state.config.timeouts.normal;
+    let long_timeout_secs = state.config.timeouts.long;
+    let upload_timeout_secs = state.config.timeouts.upload;
+    let example_router = Router::new()
+        .route("/pong", get(handler::pong))
+        .route("/hello", get(handler::hello))
+        .route("/health", get(handler::health))
+        .route("/healthz", get(handler::health_check))
+        .route("/monitor", get(handler::monitor))
+        .route("/test/quick", get(handler::quick).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(quick_timeout_secs),
+        )))
+        .route("/test/normal", get(handler::normal).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(normal_timeout_secs),
+        )))
+        .route("/test/long", get(handler::long).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(long_timeout_secs),
+        )))
+        .route("/test/timeout", get(handler::timeout_handler))
+        .route("/upload", post(handler::upload).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(upload_timeout_secs),
+        )))
+        .route("/upload/v2", post(handler::upload_v2).layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(upload_timeout_secs),
+        )));
+
     let api_router = Router::new()
         .merge(ping_router)
         .merge(questions_router)
         .merge(materials_router)
+        .merge(example_router)
         .layer(GovernorLayer::new(global_cfg));
 
     let body_limit = state.config.body_limit;
@@ -151,13 +184,9 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
     // ── Assemble full router ───────────────────────────────────────────────────
     //
     // Layer order (outermost first):
-    //   1. Prometheus — records ALL requests
-    //   2. RecoverLayer — catches panics → 500 JSON
-    //   3. ErrorHandler — wraps non-JSON error responses into JSON envelope
-    //   4. CORS
-    //   5. BodyLimit — global body size cap (mirrors Go's fiber.Config.BodyLimit)
-    //   6. BehaviorLogger — API request audit log
-    let base = Router::new()
+    let telemetry_enabled = state.config.telemetry.enabled;
+
+    let mut base = Router::new()
         .merge(system_router)
         .nest("/tcg-ucs-fe", api_router)
         .layer(
@@ -168,8 +197,14 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
                 .layer(CorsLayer::permissive())
                 .layer(DefaultBodyLimit::max(body_limit))
                 .layer(middleware::from_fn(behavior_logger)),
-        )
-        .with_state(state);
+        );
+
+    if telemetry_enabled {
+        base = base.layer(middleware::from_fn(otel_trace));
+        tracing::info!("otel_trace middleware enabled");
+    }
+
+    let base = base.with_state(state);
 
     swagger::register(base, port)
 }

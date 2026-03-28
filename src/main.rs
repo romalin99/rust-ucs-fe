@@ -71,6 +71,10 @@ impl Application {
             .map_err(|e| tracing::warn!(error = %e, "flight recorder failed to start"))
             .ok();
 
+        // ── Prometheus metrics ──────────────────────────────────────────────────
+        // Mirrors Go's `metrics.Init(cfg.Log.ServiceName)`.
+        crate::pkg::metrics::init(&cfg.log.service_name);
+
         // ── Oracle credentials ────────────────────────────────────────────────
         // Mirrors Go's `buildInfra` → `c.LoadOracleConnectInfoFromAws(envStr)`.
         // Falls back to values already present in the TOML config if AWS fails
@@ -150,6 +154,11 @@ impl Application {
     async fn shutdown(self) {
         info!("graceful shutdown starting...");
 
+        if let Some(fr) = self.flight_recorder {
+            fr.stop().await;
+            info!("flight recorder stopped");
+        }
+
         self.cron_jobs.stop_all();
         info!("cron scheduler stopped");
 
@@ -159,20 +168,24 @@ impl Application {
         self.uss_mapping_loader.stop();
         info!("USS mapping loader stopped");
 
-        if let Some(fr) = self.flight_recorder {
-            fr.stop().await;
-            info!("flight recorder stopped");
-        }
-
         let _ = self.oracle_monitor_stop.send(true);
         info!("oracle pool monitor stopped");
 
         self.mem_stats_handle.stop();
         info!("memstats task stopped");
 
+        crate::pkg::concurrency::release_pool();
+        info!("task pool released");
+
+        crate::infra::close_redis_multi_db();
+        info!("Redis multi-DB instances closed");
+
         // AppInfra connections close when the last Arc drops.
         drop(self.infra);
         info!("infrastructure connections closed");
+
+        crate::telemetry::shutdown();
+        info!("telemetry shutdown complete");
 
         info!("graceful shutdown complete");
 

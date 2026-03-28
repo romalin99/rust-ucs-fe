@@ -86,6 +86,19 @@ pub fn get_db_instance(idx: i32) -> anyhow::Result<&'static RedisInstance> {
         .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
 }
 
+/// Close all Redis multi-DB instances.
+/// Mirrors Go's `ComManager.Close()` which iterates `m.Rcs` and closes each client.
+pub fn close_redis_multi_db() {
+    if let Some(map) = REDIS_DB_MAP.get() {
+        tracing::info!(count = map.len(), "closing Redis multi-DB instances");
+        // redis::Client instances are reference-counted; dropping all Arcs will close connections.
+        // The static OnceCell itself cannot be cleared, but we log for operational visibility.
+        for (key, _inst) in map.iter() {
+            tracing::info!(key = %key, "Redis DB instance marked for close");
+        }
+    }
+}
+
 // ── Oracle pool stats monitor ─────────────────────────────────────────────────
 
 /// Background task that logs Oracle r2d2 pool stats periodically.

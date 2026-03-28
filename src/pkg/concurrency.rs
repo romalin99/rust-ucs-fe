@@ -44,6 +44,49 @@ where
     })
 }
 
+/// Synchronous panic-safe wrapper.
+///
+/// Mirrors Go's `gos.RunSafe(fn func())`: runs a closure, catching any panic.
+pub fn run_safe<F: FnOnce()>(f: F) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    if let Err(e) = result {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let msg = if let Some(s) = e.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = e.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        tracing::error!("[run_safe] panic: {msg}\nstack backtrace:\n{bt}");
+        eprintln!("[run_safe] panic: {msg}\nstack backtrace:\n{bt}");
+        crate::pkg::logs::flush();
+    }
+}
+
+/// Standalone defer-able panic recovery — logs + flushes.
+///
+/// Mirrors Go's `gos.Recover()` which is `defer gos.Recover()` in Go.
+/// In Rust, use in `catch_unwind` or at the top of `spawn_blocking` closures.
+pub fn recover_panic(label: &str) {
+    let bt = std::backtrace::Backtrace::force_capture();
+    tracing::error!("[Recover] {label}: panic captured\nstack backtrace:\n{bt}");
+    eprintln!("[Recover] {label}: panic captured\nstack backtrace:\n{bt}");
+    crate::pkg::logs::flush();
+}
+
+/// Panic recovery that flushes logs and then **re-panics** to crash the process.
+///
+/// Mirrors Go's `gos.RecoverThenCrash()`: used in goroutines where a panic
+/// is unrecoverable and the process must terminate.
+pub fn recover_then_crash(label: &str) {
+    let bt = std::backtrace::Backtrace::force_capture();
+    tracing::error!("[RecoverThenCrash] {label}: fatal panic\nstack backtrace:\n{bt}");
+    eprintln!("[RecoverThenCrash] {label}: fatal panic\nstack backtrace:\n{bt}");
+    crate::pkg::logs::flush();
+    std::process::abort();
+}
+
 // ── Dynamic lock timeout (mirrors gos/lock.go) ────────────────────────────────
 
 /// Tracks how many Oracle `FOR UPDATE` operations are currently in flight.
@@ -145,6 +188,13 @@ impl TaskPool {
     /// Note: Tokio `Semaphore` doesn't support dynamic resize; this is a
     /// no-op kept for API parity with Go's `gos.Resize(count)`.
     pub fn resize(&self, _new_concurrency: usize) {}
+
+    /// Closes the semaphore, preventing new tasks from being submitted.
+    /// Mirrors Go's `gos.ReleasePool()`.
+    pub fn close(&self) {
+        self.semaphore.close();
+        tracing::info!("TaskPool closed (semaphore shut)");
+    }
 }
 
 static DEFAULT_POOL_SIZE: usize = 1000;
@@ -158,4 +208,12 @@ static GLOBAL_POOL: std::sync::OnceLock<TaskPool> = std::sync::OnceLock::new();
 /// Mirrors Go's `gos.GetPool()`.
 pub fn get_pool() -> &'static TaskPool {
     GLOBAL_POOL.get_or_init(|| TaskPool::new(DEFAULT_POOL_SIZE, DEFAULT_QUEUE_SIZE))
+}
+
+/// Stop the global task pool.
+/// Mirrors Go's `gos.ReleasePool()`.
+pub fn release_pool() {
+    if let Some(pool) = GLOBAL_POOL.get() {
+        pool.close();
+    }
 }

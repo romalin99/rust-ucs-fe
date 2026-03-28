@@ -7,7 +7,12 @@
 ///   • `http_request_duration_seconds` — Histogram (method, path, status)
 ///   • `http_request_size_bytes`       — Histogram (method, path, status)
 ///   • `http_response_size_bytes`      — Histogram (method, path, status)
-///   • `http_requests_in_progress`     — Gauge     (method, path)
+///   • `http_requests_in_progress`     — Gauge     (method, path)  [defined but NOT used — matches Go]
+///
+/// Note: Go uses `SummaryVec` for size metrics; the `prometheus` Rust crate has no
+/// Summary type, so `HistogramVec` with wide buckets is the closest equivalent.
+/// PromQL queries differ: Summary uses `{quantile="0.99"}`, Histogram uses
+/// `histogram_quantile(0.99, rate(..._bucket[5m]))`.
 ///
 /// All metrics carry a const label `service = "<service_name>"` matching Go.
 use axum::{
@@ -18,8 +23,8 @@ use axum::{
 };
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts,
-    register_counter_vec, register_gauge_vec, register_histogram_vec,
+    CounterVec, HistogramOpts, HistogramVec, Opts,
+    register_counter_vec, register_histogram_vec,
 };
 use std::time::Instant;
 
@@ -53,7 +58,7 @@ static REQUEST_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new("http_request_size_bytes", "HTTP request size in bytes")
             .const_label("service", SERVICE_NAME)
-            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0]),
+            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0]),
         &["method", "path", "status"]
     )
     .expect("http_request_size_bytes registration failed")
@@ -63,32 +68,22 @@ static RESPONSE_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new("http_response_size_bytes", "HTTP response size in bytes")
             .const_label("service", SERVICE_NAME)
-            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0]),
+            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0]),
         &["method", "path", "status"]
     )
     .expect("http_response_size_bytes registration failed")
-});
-
-static ACTIVE_REQUESTS: Lazy<GaugeVec> = Lazy::new(|| {
-    register_gauge_vec!(
-        Opts::new("http_requests_in_progress", "Current number of HTTP requests being processed")
-            .const_label("service", SERVICE_NAME),
-        &["method", "path"]
-    )
-    .expect("http_requests_in_progress registration failed")
 });
 
 // ── Skip paths (mirrors Go's prometheus.go configuration) ─────────────────────
 
 const SKIP_PATHS: &[&str] = &["/ping", "/swagger", "/favicon.ico", "/metrics", "/monitor"];
 
-const IGNORE_STATUS_CODES: &[u16] = &[401, 403, 404];
-
 // ── Middleware function ───────────────────────────────────────────────────────
 
 /// Axum middleware that records Prometheus metrics for every request.
 ///
 /// Mirrors Go's `FiberPrometheus.Middleware`.
+/// Note: Go never increments `activeRequests` gauge; we match that behavior.
 pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
     let raw_path = req.uri().path().to_string();
     let method   = req.method().to_string();
@@ -103,10 +98,6 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| raw_path.clone());
 
-    ACTIVE_REQUESTS
-        .with_label_values(&[&method, &matched])
-        .inc();
-
     let start = Instant::now();
     let request_size = req.headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -116,16 +107,7 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
 
     let response = next.run(req).await;
 
-    ACTIVE_REQUESTS
-        .with_label_values(&[&method, &matched])
-        .dec();
-
     let status_code = response.status().as_u16();
-
-    if IGNORE_STATUS_CODES.contains(&status_code) {
-        return response;
-    }
-
     let duration = start.elapsed().as_secs_f64();
     let status   = status_code.to_string();
     let labels   = [method.as_str(), matched.as_str(), status.as_str()];

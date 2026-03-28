@@ -487,3 +487,12 @@ pub fn init_tracing(cfg: &LogConfig) {
 
     install_exit_hooks();
 }
+
+/// Shut down telemetry resources.
+///
+/// Mirrors Go's `Telemetry.Close()` → `tp.Shutdown(ctx)`.
+/// Currently a no-op because the `opentelemetry` crate is not wired in;
+/// when it is, call `opentelemetry::global::shutdown_tracer_provider()` here.
+pub fn shutdown() {
+    tracing::info!("telemetry shutdown");
+}

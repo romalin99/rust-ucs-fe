@@ -62,7 +62,7 @@ pub struct UssHttpError {
 
 impl std::fmt::Display for UssHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "USS HTTP {}: {}", self.status, self.body)
+        write!(f, "{}", self.body)
     }
 }
 
@@ -139,10 +139,16 @@ impl<'de> Deserialize<'de> for FlexTime {
 ///
 /// JSON value is a plain string or `null`; never `{"Val":…,"Valid":…}`.
 /// Empty string is treated as null (Valid=false).
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct NullString {
     pub val:   String,
     pub valid: bool,
+}
+
+impl serde::Serialize for NullString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.valid { serializer.serialize_str(&self.val) } else { serializer.serialize_none() }
+    }
 }
 
 impl NullString {
@@ -207,10 +213,16 @@ impl<'de> Deserialize<'de> for NullString {
 /// Go's `NullInt32.UnmarshalJSON(null)` sets `Val = -1, Valid = false`.
 /// `#[serde(default)]` (absent key) uses `Default` → `{val: 0, valid: false}` (Go zero-value).
 /// Explicit JSON `null` goes through `Deserialize` → `{val: -1, valid: false}`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct NullInt32 {
     pub val:   i32,
     pub valid: bool,
+}
+
+impl serde::Serialize for NullInt32 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.valid { serializer.serialize_i32(self.val) } else { serializer.serialize_none() }
+    }
 }
 
 impl Default for NullInt32 {
@@ -231,10 +243,16 @@ impl<'de> Deserialize<'de> for NullInt32 {
 /// Mirrors Go's `NullBool`.
 ///
 /// JSON value may be `true`, `false`, or `null`; null → `{val: false, valid: false}`.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct NullBool {
     pub val:   bool,
     pub valid: bool,
+}
+
+impl serde::Serialize for NullBool {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.valid { serializer.serialize_bool(self.val) } else { serializer.serialize_none() }
+    }
 }
 
 impl<'de> Deserialize<'de> for NullBool {

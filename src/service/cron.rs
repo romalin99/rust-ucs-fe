@@ -101,6 +101,20 @@ impl CommonCronJobs {
             });
         }
 
+        let job_count = stop_handles.len();
+        tracing::info!("──── Registered Cron Jobs ({}) ────", job_count);
+        for (name, cfg) in jobs {
+            if cfg.enabled && cfg.interval > 0 {
+                tracing::info!(
+                    job = %name,
+                    interval_secs = cfg.interval,
+                    timeout_secs = cfg.timeout,
+                    "  ✓ registered"
+                );
+            }
+        }
+        tracing::info!("──── End Registered Cron Jobs ────");
+
         Self { stop_handles }
     }
 

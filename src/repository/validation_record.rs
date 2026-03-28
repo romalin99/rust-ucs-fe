@@ -268,8 +268,7 @@ impl ValidationRecordRepository {
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
                                IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
-                        WHERE CUSTOMER_ID = :1 \
-                        ORDER BY CREATED_AT DESC";
+                        WHERE CUSTOMER_ID = :1";
 
             let mut stmt = conn.statement(sql)
                 .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
@@ -299,8 +298,7 @@ impl ValidationRecordRepository {
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
                                IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
-                        WHERE MERCHANT_CODE = :1 \
-                        ORDER BY CREATED_AT DESC";
+                        WHERE MERCHANT_CODE = :1";
 
             let mut stmt = conn.statement(sql)
                 .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
@@ -334,8 +332,7 @@ impl ValidationRecordRepository {
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
                                IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
-                        WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2 \
-                        ORDER BY CREATED_AT DESC";
+                        WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2";
 
             let mut stmt = conn.statement(sql)
                 .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
@@ -366,8 +363,7 @@ impl ValidationRecordRepository {
             let sql  = "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
                                IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
                         FROM TCG_UCS.VALIDATION_RECORD \
-                        WHERE IP = :1 \
-                        ORDER BY CREATED_AT DESC";
+                        WHERE IP = :1";
 
             let mut stmt = conn.statement(sql)
                 .prefetch_rows(super::DEFAULT_PREFETCH_ROWS).fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)

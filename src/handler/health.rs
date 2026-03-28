@@ -82,8 +82,9 @@ pub async fn hello(Query(q): Query<HelloQuery>) -> Json<serde_json::Value> {
 ///
 /// Mirrors Go's `HealthHandler`: returns 200 with no CORS headers and no body.
 /// Used by load-balancer probes that reject CORS headers.
+/// Go explicitly strips 8 CORS headers to prevent CorsLayer leakage.
 pub async fn health() -> Response {
-    (
+    let mut resp = (
         StatusCode::OK,
         [
             (axum::http::header::CONTENT_TYPE,  "application/json"),
@@ -91,7 +92,18 @@ pub async fn health() -> Response {
         ],
         Body::empty(),
     )
-        .into_response()
+        .into_response();
+
+    let headers = resp.headers_mut();
+    headers.remove(axum::http::header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+    headers.remove(axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS);
+    headers.remove(axum::http::header::ACCESS_CONTROL_ALLOW_METHODS);
+    headers.remove(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN);
+    headers.remove(axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS);
+    headers.remove(axum::http::header::ACCESS_CONTROL_MAX_AGE);
+    headers.remove(axum::http::header::VARY);
+
+    resp
 }
 
 // ── health_check ──────────────────────────────────────────────────────────────
@@ -102,7 +114,7 @@ pub async fn health() -> Response {
 pub async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
-        "time":   chrono::Utc::now().to_rfc3339(),
+        "time":   chrono::Local::now().to_rfc3339(),
     }))
 }
 
@@ -138,21 +150,34 @@ pub async fn timeout_handler() -> Response {
 /// GET /tcg-ucs-fe/test/quick
 ///
 /// Mirrors Go's `QuickHandler`: polls every 500 ms for 6 s total.
-pub async fn quick() -> Json<serde_json::Value> {
+/// Returns 408 if the request is cancelled before completion.
+pub async fn quick() -> Response {
     let start    = std::time::Instant::now();
     let target   = Duration::from_secs(6);
     let mut tick = time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
     loop {
-        tick.tick().await;
-        if start.elapsed() >= target {
-            info!("Quick handler processed");
-            return Json(serde_json::json!({
-                "code":    200,
-                "message": "success",
-                "data":    { "type": "quick", "duration": "6s" },
-            }));
+        tokio::select! {
+            _ = tick.tick() => {
+                if start.elapsed() >= target {
+                    info!("Quick handler processed");
+                    return Json(serde_json::json!({
+                        "code":    200,
+                        "message": "success",
+                        "data":    { "type": "quick", "duration": "6s" },
+                    })).into_response();
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                return (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(serde_json::json!({
+                        "error": "request timeout",
+                        "message": "operation cancelled",
+                    })),
+                ).into_response();
+            }
         }
     }
 }
@@ -161,38 +186,54 @@ pub async fn quick() -> Json<serde_json::Value> {
 
 /// GET /tcg-ucs-fe/test/normal
 ///
-/// Mirrors Go's `NormalHandler`: waits 5 s.
-pub async fn normal() -> Json<serde_json::Value> {
-    time::sleep(Duration::from_secs(5)).await;
-    info!("Normal handler processed");
-    Json(serde_json::json!({
-        "code":    200,
-        "message": "success",
-        "data": {
-            "type":     "normal",
-            "duration": "5s",
-            "result":   "some database query result",
-        },
-    }))
+/// Mirrors Go's `NormalHandler`: waits 5 s. Returns 408 on cancellation.
+pub async fn normal() -> Response {
+    tokio::select! {
+        _ = time::sleep(Duration::from_secs(5)) => {
+            info!("Normal handler processed");
+            Json(serde_json::json!({
+                "code":    200,
+                "message": "success",
+                "data": {
+                    "type":     "normal",
+                    "duration": "5s",
+                    "result":   "some database query result",
+                },
+            })).into_response()
+        }
+        _ = tokio::signal::ctrl_c() => {
+            (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({
+                "error": "request timeout", "message": "operation cancelled",
+            }))).into_response()
+        }
+    }
 }
 
 // ── long ──────────────────────────────────────────────────────────────────────
 
 /// GET /tcg-ucs-fe/test/long
 ///
-/// Mirrors Go's `LongHandler`: waits 15 s.
-pub async fn long() -> Json<serde_json::Value> {
-    time::sleep(Duration::from_secs(15)).await;
-    info!("Long handler processed");
-    Json(serde_json::json!({
-        "code":    200,
-        "message": "success",
-        "data": {
-            "type":     "long",
-            "duration": "15s",
-            "result":   "complex calculation result",
-        },
-    }))
+/// Mirrors Go's `LongHandler`: waits 15 s. Returns 408 on cancellation.
+pub async fn long() -> Response {
+    tokio::select! {
+        _ = time::sleep(Duration::from_secs(15)) => {
+            info!("Long handler processed");
+            Json(serde_json::json!({
+                "code":    200,
+                "message": "success",
+                "data": {
+                    "type":     "long",
+                    "duration": "15s",
+                    "result":   "complex calculation result",
+                },
+            })).into_response()
+        }
+        _ = tokio::signal::ctrl_c() => {
+            (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({
+                "error": "request timeout", "message": "operation cancelled",
+            }))).into_response()
+        }
+    }
 }
 
 // ── upload ────────────────────────────────────────────────────────────────────
@@ -339,29 +380,41 @@ fn parse_boundary(content_type: &str) -> Option<String> {
 
 /// Parse the first `name="file"` part from a multipart body.
 /// Returns `None` when the field is absent.
+///
+/// Uses byte-level splitting to preserve binary content intact (images, PDFs, etc.).
 fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> {
-    let delim      = format!("--{boundary}");
-    let body_str   = String::from_utf8_lossy(body);
+    let delim = format!("--{boundary}").into_bytes();
+    let sep   = b"\r\n\r\n";
 
-    for part in body_str.split(&delim) {
-        // Skip preamble and epilogue markers.
-        if part.starts_with("--") || part.trim().is_empty() {
-            continue;
+    let mut start = 0;
+    loop {
+        let part_start = find_bytes(&body[start..], &delim)?;
+        let part_start = start + part_start + delim.len();
+
+        if body.get(part_start..part_start + 2) == Some(b"--") {
+            break;
         }
 
-        // Split headers from body at the first blank line.
-        let sep = "\r\n\r\n";
-        let Some(sep_pos) = part.find(sep) else { continue };
-        let headers_str = &part[..sep_pos];
-        let raw_body    = &part[sep_pos + sep.len()..];
+        let next_delim = find_bytes(&body[part_start..], &delim)
+            .map(|i| part_start + i)
+            .unwrap_or(body.len());
 
-        // Only process the `name="file"` field.
+        let part = &body[part_start..next_delim];
+        start = next_delim;
+
+        let sep_pos = match find_bytes(part, sep) {
+            Some(p) => p,
+            None => continue,
+        };
+        let headers_raw = &part[..sep_pos];
+        let file_body   = &part[sep_pos + sep.len()..];
+
+        let headers_str = String::from_utf8_lossy(headers_raw);
         let headers_lower = headers_str.to_lowercase();
         if !headers_lower.contains("name=\"file\"") {
             continue;
         }
 
-        // Extract filename from Content-Disposition.
         let filename = headers_str
             .split(';')
             .map(str::trim)
@@ -369,15 +422,22 @@ fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> 
             .map(|p| p["filename=".len()..].trim_matches('"').to_string())
             .unwrap_or_else(|| "upload".to_string());
 
-        // Trim the trailing boundary delimiter `\r\n`.
-        let data_str = raw_body.trim_end_matches("\r\n");
+        let data = if file_body.ends_with(b"\r\n") {
+            &file_body[..file_body.len() - 2]
+        } else {
+            file_body
+        };
 
         return Some(MultipartField {
             filename,
-            data: Bytes::copy_from_slice(data_str.as_bytes()),
+            data: Bytes::copy_from_slice(data),
         });
     }
     None
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
