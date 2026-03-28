@@ -61,6 +61,7 @@ dependencies = [
     "install-cargo-audit",
     "install-cargo-tarpaulin",
     "install-cargo-nextest",
+    "install-tokei",
 ]
 
 [tasks.install-cargo-watch]
@@ -92,6 +93,11 @@ args        = ["install", "cargo-tarpaulin", "--locked"]
 description = "Install cargo-nextest (faster, richer test runner)."
 command     = "cargo"
 args        = ["install", "cargo-nextest", "--locked"]
+
+[tasks.install-tokei]
+description = "Install tokei (lines-of-code statistics)."
+command     = "cargo"
+args        = ["install", "tokei", "--locked"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VERSION
@@ -127,6 +133,26 @@ args        = ["build", "--release", "--bin", "${APP}"]
 description = "Compile ALL targets (bins, examples, tests, benches) in debug mode."
 command     = "cargo"
 args        = ["build", "--all-targets"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STATISTICS — project metrics (requires tokei)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.stats]
+description   = "Show project lines-of-code statistics (auto-installs tokei)."
+install_crate = "tokei"
+command       = "tokei"
+args          = ["--sort", "code"]
+
+[tasks.stats-detail]
+description   = "Per-file lines-of-code breakdown."
+install_crate = "tokei"
+command       = "tokei"
+args          = ["--files", "--sort", "code"]
+
+[tasks.status]
+description = "Alias for `stats`."
+alias       = "stats"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN
