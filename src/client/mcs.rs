@@ -291,6 +291,8 @@ pub struct McsClient {
     base_url: String,
     /// Trailing slash guaranteed (e.g. `"tcg-mcs-ae/"`).
     base_path: String,
+    /// Pre-computed URL for `POST player/verifyPlayerInfo`.
+    verify_player_info_url: String,
 }
 
 impl McsClient {
@@ -313,10 +315,13 @@ impl McsClient {
             }
         };
 
+        let verify_player_info_url = format!("{}/{}player/verifyPlayerInfo", base_url, base_path);
+
         Self {
             inner,
             base_url,
             base_path,
+            verify_player_info_url,
         }
     }
 
@@ -417,10 +422,7 @@ impl McsClient {
         let start = Instant::now();
         const OP: &str = "verifyPlayerInfo";
 
-        let url = format!(
-            "{}/{}player/verifyPlayerInfo",
-            self.base_url, self.base_path
-        );
+        let url = &self.verify_player_info_url;
 
         let req_body = serde_json::to_vec(req)
             .with_context(|| format!("{OP}: marshal request body failed"))?;

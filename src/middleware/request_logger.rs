@@ -37,12 +37,14 @@ static SKIP_PATHS: &[&str] = &[
 /// wrapper functions) so that the file/line metadata points here, matching
 /// Go's `zap.AddCallerSkip(1)` which shows the middleware as caller.
 pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
-    let path = req.uri().path().to_string();
-    let method = req.method().clone();
-
-    if SKIP_PATHS.iter().any(|p| path.contains(p)) {
+    // Check skip-path with borrowed &str — no allocation needed for skipped paths
+    if SKIP_PATHS.iter().any(|p| req.uri().path().contains(p)) {
         return next.run(req).await;
     }
+
+    // Only allocate for non-skipped (business API) requests
+    let path = req.uri().path().to_string();
+    let method = req.method().clone();
 
     let client_ip = extract_client_ip(&req);
     let (trace_id, span_id) = extract_trace_ids(&req);

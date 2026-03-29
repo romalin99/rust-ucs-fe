@@ -8,7 +8,6 @@
 /// Holds every runtime resource (Oracle pool, Redis, HTTP clients,
 /// repositories) that services and handlers need.  The single
 /// `Arc<AppInfra>` is created in `main` and cloned into `AppState`.
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +32,7 @@ pub struct RedisInstance {
     pub ttl: Duration,
 }
 
-static REDIS_DB_MAP: OnceCell<HashMap<String, RedisInstance>> = OnceCell::new();
+static REDIS_DB_MAP: OnceCell<Vec<(i32, RedisInstance)>> = OnceCell::new();
 
 /// Initialise the global multi-DB Redis map.
 /// Mirrors Go's `Config.InitDBSV2()` — creates a client per DB index and pings.
@@ -41,7 +40,7 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
     if REDIS_DB_MAP.get().is_some() {
         return;
     }
-    let mut map = HashMap::with_capacity(dbs.len());
+    let mut map: Vec<(i32, RedisInstance)> = Vec::with_capacity(dbs.len());
     let addr = cfg_addr
         .first()
         .map(String::as_str)
@@ -64,17 +63,16 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
                         if let Err(e) = redis::cmd("PING").query_async::<String>(&mut cm).await {
                             tracing::warn!(db = db_entry.db, err = %e, "Redis PING failed (continuing)");
                         }
-                        let key = format!("dbidx:{}", db_entry.db);
                         let ttl =
                             Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
-                        map.insert(
-                            key,
+                        map.push((
+                            db_entry.db as i32,
                             RedisInstance {
                                 client: Arc::new(client),
                                 manager: cm,
                                 ttl,
                             },
-                        );
+                        ));
                         tracing::info!(db = db_entry.db, "Redis DB instance initialised");
                     }
                     Err(e) => {
@@ -91,23 +89,24 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
 /// Retrieve a Redis DB instance by index.
 /// Mirrors Go's `redis.GetDbInstance(idx int32)`.
 pub fn get_db_instance(idx: i32) -> anyhow::Result<&'static RedisInstance> {
-    let key = format!("dbidx:{}", idx);
     REDIS_DB_MAP
         .get()
         .ok_or_else(|| anyhow::anyhow!("Redis multi-DB map not initialised"))?
-        .get(&key)
+        .iter()
+        .find(|(db, _)| *db == idx)
+        .map(|(_, inst)| inst)
         .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
 }
 
 /// Clone the pre-built ConnectionManager for a given DB index.
-/// This is O(1) — `ConnectionManager` is Arc-backed.
+/// Cloning is O(1) — `ConnectionManager` is Arc-backed.
 pub fn get_db_manager(idx: i32) -> anyhow::Result<redis::aio::ConnectionManager> {
-    let key = format!("dbidx:{}", idx);
     REDIS_DB_MAP
         .get()
         .ok_or_else(|| anyhow::anyhow!("Redis multi-DB map not initialised"))?
-        .get(&key)
-        .map(|inst| inst.manager.clone())
+        .iter()
+        .find(|(db, _)| *db == idx)
+        .map(|(_, inst)| inst.manager.clone())
         .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
 }
 
@@ -118,8 +117,8 @@ pub fn close_redis_multi_db() {
         tracing::info!(count = map.len(), "closing Redis multi-DB instances");
         // redis::Client instances are reference-counted; dropping all Arcs will close connections.
         // The static OnceCell itself cannot be cleared, but we log for operational visibility.
-        for (key, _inst) in map.iter() {
-            tracing::info!(key = %key, "Redis DB instance marked for close");
+        for (db, _inst) in map.iter() {
+            tracing::info!(db, "Redis DB instance marked for close");
         }
     }
 }

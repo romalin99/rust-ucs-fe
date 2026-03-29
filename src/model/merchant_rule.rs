@@ -52,11 +52,19 @@ impl MerchantRuleConfig {
     pub fn parse_questions(&self) -> anyhow::Result<std::collections::HashMap<String, Question>> {
         let raw = self.questions_json.as_deref().unwrap_or("");
         if raw.is_empty() {
-            anyhow::bail!("questions field is empty for merchant: {}", self.merchant_code);
+            anyhow::bail!(
+                "questions field is empty for merchant: {}",
+                self.merchant_code
+            );
         }
         let map: std::collections::HashMap<String, Question> =
-            serde_json::from_str(raw)
-                .map_err(|e| anyhow::anyhow!("unmarshal questions failed for merchant {}: {}", self.merchant_code, e))?;
+            serde_json::from_str(raw).map_err(|e| {
+                anyhow::anyhow!(
+                    "unmarshal questions failed for merchant {}: {}",
+                    self.merchant_code,
+                    e
+                )
+            })?;
         Ok(map)
     }
 }
@@ -97,7 +105,10 @@ pub struct QuestionInfo {
     pub field_attribute: String,
     #[serde(rename = "fieldType")]
     pub field_type: String,
-    #[serde(rename = "fieldDropdownList", skip_serializing_if = "is_dropdown_empty")]
+    #[serde(
+        rename = "fieldDropdownList",
+        skip_serializing_if = "is_dropdown_empty"
+    )]
     pub field_dropdown_list: Option<Vec<crate::model::template::DropdownItem>>,
 }
 
@@ -160,7 +171,10 @@ impl MerchantRule {
 
     /// Serializes a question map back into the QUESTIONS CLOB field.
     /// Mirrors Go's `(m *MerchantRule) MarshalQuestions(questions)`.
-    pub fn marshal_questions(&mut self, questions: &HashMap<String, Question>) -> anyhow::Result<()> {
+    pub fn marshal_questions(
+        &mut self,
+        questions: &HashMap<String, Question>,
+    ) -> anyhow::Result<()> {
         let json = serde_json::to_string(questions)
             .map_err(|e| anyhow::anyhow!("marshal questions failed: {e}"))?;
         self.questions_json = Some(json);
@@ -181,30 +195,58 @@ impl MerchantRule {
         let start = std::time::Instant::now();
         let raw = self.field_translations.as_deref().unwrap_or("");
         if raw.is_empty() || raw == "{}" {
-            tracing::info!(language, fields = 0, elapsed_ms = 0, "GetTranslationsByLanguage (empty CLOB)");
+            tracing::info!(
+                language,
+                fields = 0,
+                elapsed_ms = 0,
+                "GetTranslationsByLanguage (empty CLOB)"
+            );
             return HashMap::new();
         }
-        let parsed: Result<HashMap<String, serde_json::Value>, _> = serde_json::from_str(raw);
-        let all = match parsed {
+
+        // Single parse directly into the target type — no intermediate Value allocation.
+        let all: HashMap<String, Vec<FieldIdTranslation>> = match serde_json::from_str(raw) {
             Ok(m) => m,
             Err(e) => {
-                tracing::warn!(error = %e, elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage unmarshal failed");
+                tracing::warn!(
+                    error = %e,
+                    elapsed_ms = start.elapsed().as_millis() as u64,
+                    "GetTranslationsByLanguage unmarshal failed"
+                );
                 return HashMap::new();
             }
         };
-        let (data, fallback) = match all.get(language) {
-            Some(v) => (v.clone(), ""),
+
+        // Pick the requested language, fall back to "EN".
+        let (list, fallback) = match all.get(language) {
+            Some(v) => (v, ""),
             None => match all.get("EN") {
-                Some(v) => (v.clone(), " (fallback to EN)"),
+                Some(v) => (v, " (fallback to EN)"),
                 None => {
-                    tracing::info!(language, fallback = " (no EN fallback)", fields = 0, elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage");
+                    tracing::info!(
+                        language,
+                        fallback = " (no EN fallback)",
+                        fields = 0,
+                        elapsed_ms = start.elapsed().as_millis() as u64,
+                        "GetTranslationsByLanguage"
+                    );
                     return HashMap::new();
                 }
-            }
+            },
         };
-        let list: Vec<FieldIdTranslation> = serde_json::from_value(data).unwrap_or_default();
-        let result: HashMap<String, String> = list.into_iter().map(|t| (t.field_id, t.field_translation)).collect();
-        tracing::info!(language, fallback, fields = result.len(), elapsed_ms = start.elapsed().as_millis() as u64, "GetTranslationsByLanguage");
+
+        let result: HashMap<String, String> = list
+            .iter()
+            .map(|t| (t.field_id.clone(), t.field_translation.clone()))
+            .collect();
+
+        tracing::info!(
+            language,
+            fallback,
+            fields = result.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "GetTranslationsByLanguage"
+        );
         result
     }
 }

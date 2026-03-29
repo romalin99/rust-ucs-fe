@@ -26,10 +26,10 @@ use crate::config::ServiceConfig;
 
 // ── Retry constants (mirrors Go's doWithRetry) ────────────────────────────────
 
-const MAX_ATTEMPTS:    u32      = 3;
-const RETRY_DELAY:     Duration = Duration::from_millis(700);
+const MAX_ATTEMPTS: u32 = 3;
+const RETRY_DELAY: Duration = Duration::from_millis(700);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_RESPONSE_SIZE: usize  = 1024 * 100; // 100 KB
+const MAX_RESPONSE_SIZE: usize = 1024 * 100; // 100 KB
 
 // ── Error type (mirrors Go's wps/error.go) ────────────────────────────────────
 
@@ -37,7 +37,7 @@ const MAX_RESPONSE_SIZE: usize  = 1024 * 100; // 100 KB
 /// Mirrors Go's `wps.HTTPError`.
 #[derive(Debug, Clone)]
 pub struct WpsHttpError {
-    pub body:   String,
+    pub body: String,
     pub status: u16,
 }
 
@@ -71,7 +71,11 @@ pub struct ResetPasswordStatusValue {
     ///
     /// Present in WPS response but omitted from outgoing JSON (not in Go struct)
     /// unless explicitly set to `true`.
-    #[serde(rename = "isPersonalInfoResetEnabled", default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        rename = "isPersonalInfoResetEnabled",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub is_personal_info_reset_enabled: bool,
 }
 
@@ -97,6 +101,8 @@ pub struct WpsClient {
     inner: Client,
     /// Fully assembled base URL, e.g. `http://10.80.0.58:9007/wps-core`
     base_url: String,
+    /// Pre-computed URL for `GET /members/reset-password-status`.
+    reset_status_url: String,
 }
 
 impl WpsClient {
@@ -118,7 +124,13 @@ impl WpsClient {
             cfg.base_path.trim_end_matches('/')
         );
 
-        Self { inner, base_url }
+        let reset_status_url = format!("{}/members/reset-password-status", base_url);
+
+        Self {
+            inner,
+            base_url,
+            reset_status_url,
+        }
     }
 
     /// `GET {base_url}/members/reset-password-status`
@@ -130,7 +142,7 @@ impl WpsClient {
         merchant_code: &str,
     ) -> Result<ResetPasswordStatusResponse> {
         let start = Instant::now();
-        let url = format!("{}/members/reset-password-status", self.base_url);
+        let url = &self.reset_status_url;
 
         tracing::info!(url = %url, merchant = merchant_code, "[WPSClient] GetResetPasswordStatus");
 
@@ -147,8 +159,8 @@ impl WpsClient {
                 e
             })?;
 
-        let result: ResetPasswordStatusResponse = serde_json::from_slice(&body)
-            .with_context(|| {
+        let result: ResetPasswordStatusResponse =
+            serde_json::from_slice(&body).with_context(|| {
                 format!(
                     "deserialization failed, raw response: {}",
                     String::from_utf8_lossy(&body)
@@ -158,7 +170,7 @@ impl WpsClient {
         tracing::info!(
             merchant = merchant_code,
             is_email_reset_enabled = result.value.is_email_reset_enabled,
-            is_sms_reset_enabled   = result.value.is_sms_reset_enabled,
+            is_sms_reset_enabled = result.value.is_sms_reset_enabled,
             elapsed_ms = start.elapsed().as_millis(),
             "[WPSClient] GetResetPasswordStatus success"
         );
@@ -196,7 +208,9 @@ impl WpsClient {
                     tracing::warn!(
                         attempt,
                         "[WPSClient] attempt {}/{} timed out after {:?}",
-                        attempt, MAX_ATTEMPTS, REQUEST_TIMEOUT
+                        attempt,
+                        MAX_ATTEMPTS,
+                        REQUEST_TIMEOUT
                     );
                     last_err = anyhow::anyhow!("WPS request timed out after {:?}", REQUEST_TIMEOUT);
                 }

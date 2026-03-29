@@ -5,8 +5,8 @@
 /// Cache key format: `"{FIELD_ID}:{FIELD_NAME}"` -> USS_ID string.
 /// Example: `"GENDER:Male" -> "1"`, `"ID_TYPE:Passport" -> "1"`.
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -19,12 +19,10 @@ use crate::repository::FieldIdUssMappingRepository;
 // ── Global cache ─────────────────────────────────────────────────────────────
 
 /// Global USS mapping cache: `"{FIELD_ID}:{FIELD_NAME}"` -> USS_ID string.
-pub static GLOBAL_USS_MAPPING_CONFIGS: OnceCell<Arc<DashMap<String, String>>> = OnceCell::new();
+pub static GLOBAL_USS_MAPPING_CONFIGS: OnceCell<DashMap<String, String>> = OnceCell::new();
 
-fn global_uss_mappings() -> Arc<DashMap<String, String>> {
-    GLOBAL_USS_MAPPING_CONFIGS
-        .get_or_init(|| Arc::new(DashMap::new()))
-        .clone()
+fn global_uss_mappings() -> &'static DashMap<String, String> {
+    GLOBAL_USS_MAPPING_CONFIGS.get_or_init(DashMap::new)
 }
 
 // ── Init barrier (mirrors Go's sync.WaitGroup) ─────────────────────────────
@@ -118,8 +116,6 @@ impl FieldIdUssMappingLoader {
     /// Starts async initial load. Periodic refresh is handled by `CommonCronJobs`,
     /// matching Go where the internal periodic loop is unused and cron drives refreshes.
     pub fn start(repo: Arc<FieldIdUssMappingRepository>) -> Self {
-        global_uss_mappings();
-
         let repo_clone = repo.clone();
         tokio::spawn(async move {
             tracing::info!("Starting async initialisation of USS mapping configs...");
@@ -179,5 +175,8 @@ pub fn get_uss_mapping_config_sync(field_id: &str, field_name: &str) -> Option<S
 pub async fn get_all_uss_mapping_configs() -> HashMap<String, String> {
     wait_for_uss_mapping_init().await;
     let cache = global_uss_mappings();
-    cache.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect()
+    cache
+        .iter()
+        .map(|entry| (entry.key().clone(), entry.value().clone()))
+        .collect()
 }

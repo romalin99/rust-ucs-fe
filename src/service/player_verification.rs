@@ -377,9 +377,10 @@ impl PlayerVerificationService {
         })?;
 
         // 6. Score profile fields (tracking submitted IDs)
-        let mut submitted_field_ids: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut qa_map: QaMap = HashMap::new();
+        let data_len = req_body.data.len();
+        let mut submitted_field_ids: std::collections::HashSet<&str> =
+            std::collections::HashSet::with_capacity(data_len);
+        let mut qa_map: QaMap = HashMap::with_capacity(data_len);
         accurate_judgment_score(
             &mut submitted_field_ids,
             &req_body.data,
@@ -391,8 +392,8 @@ impl PlayerVerificationService {
         );
 
         // 7. Build MCS request and call VerifyPlayerInfo
-        let mut field_id_map: HashMap<String, String> = HashMap::new();
-        let mut bind_map: HashMap<String, bool> = HashMap::new();
+        let mut field_id_map: HashMap<String, String> = HashMap::with_capacity(12);
+        let mut bind_map: HashMap<String, bool> = HashMap::with_capacity(12);
         let mut mcs_req = VerifyFinanceHistoryReq::default();
 
         for item in &req_body.data {
@@ -575,9 +576,9 @@ impl PlayerVerificationService {
 ///   bind=false (ignore submitted, check actual):
 ///     1. expected == "" || expected == "-1"     → score emptyScore, correct true
 ///     2. otherwise                              → score 0, correct false
-fn accurate_judgment_score(
-    submitted_field_ids: &mut std::collections::HashSet<String>,
-    data_items: &[VerifyDataItem],
+fn accurate_judgment_score<'a>(
+    submitted_field_ids: &mut std::collections::HashSet<&'a str>,
+    data_items: &'a [VerifyDataItem],
     customer: &crate::client::uss::CustomerInfo,
     customer_personal_info: &CustomerPersonalInfoValue,
     rule_cfg: &MerchantRuleConfig,
@@ -630,7 +631,7 @@ fn accurate_judgment_score(
 
     for data_item in data_items {
         let field_id = &data_item.item.field_id;
-        submitted_field_ids.insert(field_id.clone());
+        submitted_field_ids.insert(field_id.as_str());
 
         if is_financial_history(field_id) {
             continue;
@@ -711,7 +712,7 @@ fn accurate_judgment_score(
                 score = 0;
                 is_correct = false;
                 tracing::warn!(field_id = %field_id, expected = %expected_value, "bind=true empty value");
-            } else if submitted.to_lowercase() == expected_value.to_lowercase() {
+            } else if ascii_eq_ignore_case(&submitted, expected_value) {
                 score = question_cfg.score;
                 is_correct = true;
                 tracing::info!(
@@ -792,7 +793,7 @@ fn accurate_judgment_score(
 /// Mirrors Go's `calculateScoreForFinancialHistory`: only scores fields that were
 /// actually submitted (present in `submitted_field_ids`).
 fn calculate_score_for_financial_history(
-    submitted_field_ids: &std::collections::HashSet<String>,
+    submitted_field_ids: &std::collections::HashSet<&str>,
     resp: &crate::client::mcs::VerifyFinanceHistoryResp,
     rule_cfg: &MerchantRuleConfig,
     qa_map: &mut QaMap,
@@ -974,5 +975,23 @@ fn parse_accuracy_duration(s: &str) -> Result<chrono::Duration> {
         b'h' | b'H' => Ok(chrono::Duration::hours(n)),
         b'm' | b'M' => Ok(chrono::Duration::minutes(n)),
         _ => anyhow::bail!("unknown duration unit '{}' in '{}'", unit as char, s),
+    }
+}
+
+/// Case-insensitive string equality.
+///
+/// Fast path: uses `eq_ignore_ascii_case` (zero allocation) when both
+/// strings are pure ASCII — which covers the overwhelming majority of
+/// field values (phone numbers, IDs, dates, email addresses).
+///
+/// Falls back to full Unicode case-fold (`to_lowercase` comparison) only
+/// when at least one string contains non-ASCII characters, preserving
+/// exact parity with Go's `strings.EqualFold`.
+#[inline]
+fn ascii_eq_ignore_case(a: &str, b: &str) -> bool {
+    if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a.to_lowercase() == b.to_lowercase()
     }
 }

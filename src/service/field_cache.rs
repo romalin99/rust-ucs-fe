@@ -8,8 +8,8 @@
 ///   Rust uses `AtomicBool` + `tokio::sync::Notify` to replicate the same
 ///   "wait-until-loaded" contract in an async context.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -28,14 +28,11 @@ pub type MerchantDropdownMap = Arc<HashMap<String, Vec<DropdownItem>>>;
 /// Global field-config cache: merchantCode → Arc<fieldId → Vec<DropdownItem>>.
 /// Using `Arc<HashMap>` as values means `get_field_config` returns a cheap
 /// `Arc::clone` (~1 ns) instead of deep-cloning the entire map (~µs).
-pub static GLOBAL_FIELD_CONFIGS: OnceCell<Arc<DashMap<String, MerchantDropdownMap>>> =
-    OnceCell::new();
+pub static GLOBAL_FIELD_CONFIGS: OnceCell<DashMap<String, MerchantDropdownMap>> = OnceCell::new();
 
 /// Get (or lazily create) the global map.
-pub fn global_configs() -> Arc<DashMap<String, MerchantDropdownMap>> {
-    GLOBAL_FIELD_CONFIGS
-        .get_or_init(|| Arc::new(DashMap::new()))
-        .clone()
+fn global_configs() -> &'static DashMap<String, MerchantDropdownMap> {
+    GLOBAL_FIELD_CONFIGS.get_or_init(DashMap::new)
 }
 
 // ── Init barrier (mirrors Go's sync.WaitGroup) ────────────────────────────────
@@ -49,7 +46,7 @@ pub fn global_configs() -> Arc<DashMap<String, MerchantDropdownMap>> {
 //      the TOCTOU race, then awaits if still not done.
 
 static INIT_COMPLETE: AtomicBool = AtomicBool::new(false);
-static INIT_NOTIFY:   OnceCell<Arc<Notify>> = OnceCell::new();
+static INIT_NOTIFY: OnceCell<Arc<Notify>> = OnceCell::new();
 
 fn init_notify() -> Arc<Notify> {
     INIT_NOTIFY.get_or_init(|| Arc::new(Notify::new())).clone()
@@ -146,8 +143,6 @@ impl InitLoadingData {
     /// Starts async initial load. Periodic refresh is handled by `CommonCronJobs`,
     /// matching Go where `startPeriodicLoad` is unused and cron drives refreshes.
     pub fn start(repo: Arc<MerchantRuleRepository>) -> Self {
-        global_configs();
-
         let repo_clone = repo.clone();
         tokio::spawn(async move {
             tracing::info!("Starting async initialisation of field configs...");
@@ -175,7 +170,9 @@ impl InitLoadingData {
 /// mirrors Go's `GetFieldConfig` which calls `initWg.Wait()` internally.
 pub async fn get_field_config(merchant_code: &str) -> Option<MerchantDropdownMap> {
     wait_for_init().await;
-    global_configs().get(merchant_code).map(|v| Arc::clone(v.value()))
+    global_configs()
+        .get(merchant_code)
+        .map(|v| Arc::clone(v.value()))
 }
 
 pub fn set_field_config(key: String, value: HashMap<String, Vec<DropdownItem>>) {

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 // ── Serde helpers ─────────────────────────────────────────────────────────────
 
@@ -29,7 +29,10 @@ fn i32_from_null_or_int<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<
 /// Go's `UnmarshalJSON` pre-sets `UsState = NullInt32{Val: -1}` before unmarshalling,
 /// so when the `"usState"` key is absent, serde needs to use this instead of `NullInt32::default()`.
 fn default_us_state() -> NullInt32 {
-    NullInt32 { val: -1, valid: false }
+    NullInt32 {
+        val: -1,
+        valid: false,
+    }
 }
 
 /// Deserialize `Option<T>` where an explicit JSON `null` maps to `T::default()`.
@@ -56,7 +59,7 @@ use crate::config::ServiceConfig;
 /// Mirrors Go's `uss.HTTPError`.
 #[derive(Debug, Clone)]
 pub struct UssHttpError {
-    pub body:   String,
+    pub body: String,
     pub status: u16,
 }
 
@@ -141,18 +144,24 @@ impl<'de> Deserialize<'de> for FlexTime {
 /// Empty string is treated as null (Valid=false).
 #[derive(Debug, Clone, Default)]
 pub struct NullString {
-    pub val:   String,
+    pub val: String,
     pub valid: bool,
 }
 
 impl serde::Serialize for NullString {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid { serializer.serialize_str(&self.val) } else { serializer.serialize_none() }
+        if self.valid {
+            serializer.serialize_str(&self.val)
+        } else {
+            serializer.serialize_none()
+        }
     }
 }
 
 impl NullString {
-    pub fn as_str(&self) -> &str { &self.val }
+    pub fn as_str(&self) -> &str {
+        &self.val
+    }
 }
 
 impl std::fmt::Display for NullString {
@@ -178,30 +187,48 @@ impl<'de> Deserialize<'de> for NullString {
             fn visit_unit<E: de::Error>(self) -> std::result::Result<NullString, E> {
                 Ok(NullString::default())
             }
-            fn visit_some<D: Deserializer<'de>>(self, d: D) -> std::result::Result<NullString, D::Error> {
+            fn visit_some<D: Deserializer<'de>>(
+                self,
+                d: D,
+            ) -> std::result::Result<NullString, D::Error> {
                 NullString::deserialize(d)
             }
             fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<NullString, E> {
                 if v.is_empty() || v.eq_ignore_ascii_case("null") {
                     Ok(NullString::default())
                 } else {
-                    Ok(NullString { val: v.to_string(), valid: true })
+                    Ok(NullString {
+                        val: v.to_string(),
+                        valid: true,
+                    })
                 }
             }
             fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<NullString, E> {
                 self.visit_str(&v)
             }
             fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<NullString, E> {
-                Ok(NullString { val: v.to_string(), valid: true })
+                Ok(NullString {
+                    val: v.to_string(),
+                    valid: true,
+                })
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<NullString, E> {
-                Ok(NullString { val: v.to_string(), valid: true })
+                Ok(NullString {
+                    val: v.to_string(),
+                    valid: true,
+                })
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<NullString, E> {
-                Ok(NullString { val: v.to_string(), valid: true })
+                Ok(NullString {
+                    val: v.to_string(),
+                    valid: true,
+                })
             }
             fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<NullString, E> {
-                Ok(NullString { val: v.to_string(), valid: true })
+                Ok(NullString {
+                    val: v.to_string(),
+                    valid: true,
+                })
             }
         }
         d.deserialize_any(V)
@@ -215,27 +242,40 @@ impl<'de> Deserialize<'de> for NullString {
 /// Explicit JSON `null` goes through `Deserialize` → `{val: -1, valid: false}`.
 #[derive(Debug, Clone)]
 pub struct NullInt32 {
-    pub val:   i32,
+    pub val: i32,
     pub valid: bool,
 }
 
 impl serde::Serialize for NullInt32 {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid { serializer.serialize_i32(self.val) } else { serializer.serialize_none() }
+        if self.valid {
+            serializer.serialize_i32(self.val)
+        } else {
+            serializer.serialize_none()
+        }
     }
 }
 
 impl Default for NullInt32 {
     fn default() -> Self {
-        Self { val: 0, valid: false }
+        Self {
+            val: 0,
+            valid: false,
+        }
     }
 }
 
 impl<'de> Deserialize<'de> for NullInt32 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         match Option::<i32>::deserialize(d)? {
-            None => Ok(NullInt32 { val: -1, valid: false }),
-            Some(v) => Ok(NullInt32 { val: v, valid: true }),
+            None => Ok(NullInt32 {
+                val: -1,
+                valid: false,
+            }),
+            Some(v) => Ok(NullInt32 {
+                val: v,
+                valid: true,
+            }),
         }
     }
 }
@@ -245,21 +285,31 @@ impl<'de> Deserialize<'de> for NullInt32 {
 /// JSON value may be `true`, `false`, or `null`; null → `{val: false, valid: false}`.
 #[derive(Debug, Clone, Default)]
 pub struct NullBool {
-    pub val:   bool,
+    pub val: bool,
     pub valid: bool,
 }
 
 impl serde::Serialize for NullBool {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid { serializer.serialize_bool(self.val) } else { serializer.serialize_none() }
+        if self.valid {
+            serializer.serialize_bool(self.val)
+        } else {
+            serializer.serialize_none()
+        }
     }
 }
 
 impl<'de> Deserialize<'de> for NullBool {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         match Option::<bool>::deserialize(d)? {
-            None => Ok(NullBool { val: false, valid: false }),
-            Some(v) => Ok(NullBool { val: v, valid: true }),
+            None => Ok(NullBool {
+                val: false,
+                valid: false,
+            }),
+            Some(v) => Ok(NullBool {
+                val: v,
+                valid: true,
+            }),
         }
     }
 }
@@ -267,7 +317,7 @@ impl<'de> Deserialize<'de> for NullBool {
 /// Mirrors Go's `NullInt` (int64).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct NullInt {
-    pub val:   i64,
+    pub val: i64,
     pub valid: bool,
 }
 
@@ -275,7 +325,10 @@ impl<'de> Deserialize<'de> for NullInt {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         match Option::<i64>::deserialize(d)? {
             None => Ok(NullInt::default()),
-            Some(v) => Ok(NullInt { val: v, valid: true }),
+            Some(v) => Ok(NullInt {
+                val: v,
+                valid: true,
+            }),
         }
     }
 }
@@ -288,85 +341,153 @@ impl<'de> Deserialize<'de> for NullInt {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Profile {
     // ── Timestamps ────────────────────────────────────────────────────────────
-    #[serde(rename = "createTime",           default)] pub create_time:             FlexTime,
-    #[serde(rename = "updateTime",           default)] pub update_time:             FlexTime,
-    #[serde(rename = "regDate",              default)] pub reg_date:                FlexTime,
-    #[serde(rename = "birthday",             default)] pub birthday:                FlexTime,
-    #[serde(rename = "typeUpdateTime",       default)] pub type_update_time:        FlexTime,
-    #[serde(rename = "passwdLastModifyDate", default)] pub passwd_last_modify_date: FlexTime,
-    #[serde(rename = "lastLoginTime",        default)] pub last_login_time:         FlexTime,
-    #[serde(rename = "lastLogoutTime",       default)] pub last_logout_time:        FlexTime,
-    #[serde(rename = "firstDepositTime",     default)] pub first_deposit_time:      FlexTime,
-    #[serde(rename = "updatePayeeNameTime",  default)] pub update_payee_name_time:  FlexTime,
-    #[serde(rename = "lastWithdrawTime",     default)] pub last_withdraw_time:      FlexTime,
-    #[serde(rename = "lastDepositTime",      default)] pub last_deposit_time:       FlexTime,
-    #[serde(rename = "previousLoginTime",    default)] pub previous_login_time:     FlexTime,
-    #[serde(rename = "activeFlagUpdateTime", default)] pub active_flag_update_time: FlexTime,
+    #[serde(rename = "createTime", default)]
+    pub create_time: FlexTime,
+    #[serde(rename = "updateTime", default)]
+    pub update_time: FlexTime,
+    #[serde(rename = "regDate", default)]
+    pub reg_date: FlexTime,
+    #[serde(rename = "birthday", default)]
+    pub birthday: FlexTime,
+    #[serde(rename = "typeUpdateTime", default)]
+    pub type_update_time: FlexTime,
+    #[serde(rename = "passwdLastModifyDate", default)]
+    pub passwd_last_modify_date: FlexTime,
+    #[serde(rename = "lastLoginTime", default)]
+    pub last_login_time: FlexTime,
+    #[serde(rename = "lastLogoutTime", default)]
+    pub last_logout_time: FlexTime,
+    #[serde(rename = "firstDepositTime", default)]
+    pub first_deposit_time: FlexTime,
+    #[serde(rename = "updatePayeeNameTime", default)]
+    pub update_payee_name_time: FlexTime,
+    #[serde(rename = "lastWithdrawTime", default)]
+    pub last_withdraw_time: FlexTime,
+    #[serde(rename = "lastDepositTime", default)]
+    pub last_deposit_time: FlexTime,
+    #[serde(rename = "previousLoginTime", default)]
+    pub previous_login_time: FlexTime,
+    #[serde(rename = "activeFlagUpdateTime", default)]
+    pub active_flag_update_time: FlexTime,
     // ── String fields ─────────────────────────────────────────────────────────
-    #[serde(rename = "customerName",      default)] pub customer_name:      NullString,
-    #[serde(rename = "merchantCode",      default)] pub merchant_code:      NullString,
-    #[serde(rename = "nickname",          default)] pub nickname:           NullString,
-    #[serde(rename = "nickname2",         default)] pub nickname2:          NullString,
-    #[serde(rename = "appleId",           default)] pub apple_id:           NullString,
-    #[serde(rename = "mobileNo",          default)] pub mobile_no:          NullString,
-    #[serde(rename = "qqNo",              default)] pub qq_no:              NullString,
-    #[serde(rename = "lineId",            default)] pub line_id:            NullString,
-    #[serde(rename = "lineUuid",          default)] pub line_uuid:          NullString,
-    #[serde(rename = "whatsAppId",        default)] pub whats_app_id:       NullString,
-    #[serde(rename = "facebookId",        default)] pub face_book_id:       NullString,
-    #[serde(rename = "twitter",           default)] pub twitter:            NullString,
-    #[serde(rename = "twitterId",         default)] pub twitter_id:         NullString,
-    #[serde(rename = "viber",             default)] pub viber:              NullString,
-    #[serde(rename = "zalo",              default)] pub zalo:               NullString,
-    #[serde(rename = "wechat",            default)] pub wechat:             NullString,
-    #[serde(rename = "telegram",          default)] pub telegram:           NullString,
-    #[serde(rename = "idNumber",          default)] pub id_number:          NullString,
-    #[serde(rename = "idVerificationStatus", default)] pub id_verification_status: NullString,
-    #[serde(rename = "payeeName",         default)] pub payee_name:         NullString,
-    #[serde(rename = "city",              default)] pub city:               NullString,
-    #[serde(rename = "zipcode",           default)] pub zip_code:           NullString,
-    #[serde(rename = "address",           default)] pub address:            NullString,
-    #[serde(rename = "countryCode",       default)] pub country_code:       NullString,
-    #[serde(rename = "verificationMode",  default)] pub verification_mode:  NullString,
-    #[serde(rename = "login",             default)] pub login:              NullString,
-    #[serde(rename = "lastLoginIp",       default)] pub last_login_ip:      NullString,
-    #[serde(rename = "previousLoginIp",   default)] pub previous_login_ip:  NullString,
-    #[serde(rename = "refer",             default)] pub refer:              NullString,
-    #[serde(rename = "icon",              default)] pub icon:               NullString,
-    #[serde(rename = "email",             default)] pub email:              NullString,
+    #[serde(rename = "customerName", default)]
+    pub customer_name: NullString,
+    #[serde(rename = "merchantCode", default)]
+    pub merchant_code: NullString,
+    #[serde(rename = "nickname", default)]
+    pub nickname: NullString,
+    #[serde(rename = "nickname2", default)]
+    pub nickname2: NullString,
+    #[serde(rename = "appleId", default)]
+    pub apple_id: NullString,
+    #[serde(rename = "mobileNo", default)]
+    pub mobile_no: NullString,
+    #[serde(rename = "qqNo", default)]
+    pub qq_no: NullString,
+    #[serde(rename = "lineId", default)]
+    pub line_id: NullString,
+    #[serde(rename = "lineUuid", default)]
+    pub line_uuid: NullString,
+    #[serde(rename = "whatsAppId", default)]
+    pub whats_app_id: NullString,
+    #[serde(rename = "facebookId", default)]
+    pub face_book_id: NullString,
+    #[serde(rename = "twitter", default)]
+    pub twitter: NullString,
+    #[serde(rename = "twitterId", default)]
+    pub twitter_id: NullString,
+    #[serde(rename = "viber", default)]
+    pub viber: NullString,
+    #[serde(rename = "zalo", default)]
+    pub zalo: NullString,
+    #[serde(rename = "wechat", default)]
+    pub wechat: NullString,
+    #[serde(rename = "telegram", default)]
+    pub telegram: NullString,
+    #[serde(rename = "idNumber", default)]
+    pub id_number: NullString,
+    #[serde(rename = "idVerificationStatus", default)]
+    pub id_verification_status: NullString,
+    #[serde(rename = "payeeName", default)]
+    pub payee_name: NullString,
+    #[serde(rename = "city", default)]
+    pub city: NullString,
+    #[serde(rename = "zipcode", default)]
+    pub zip_code: NullString,
+    #[serde(rename = "address", default)]
+    pub address: NullString,
+    #[serde(rename = "countryCode", default)]
+    pub country_code: NullString,
+    #[serde(rename = "verificationMode", default)]
+    pub verification_mode: NullString,
+    #[serde(rename = "login", default)]
+    pub login: NullString,
+    #[serde(rename = "lastLoginIp", default)]
+    pub last_login_ip: NullString,
+    #[serde(rename = "previousLoginIp", default)]
+    pub previous_login_ip: NullString,
+    #[serde(rename = "refer", default)]
+    pub refer: NullString,
+    #[serde(rename = "icon", default)]
+    pub icon: NullString,
+    #[serde(rename = "email", default)]
+    pub email: NullString,
     // ── Numeric fields ────────────────────────────────────────────────────────
-    #[serde(rename = "customerId",        default)] pub customer_id:        NullInt,
-    #[serde(rename = "recommenderId",     default)] pub recommender_id:     NullInt,
-    #[serde(rename = "levelId",           default)] pub level_id:           NullInt,
+    #[serde(rename = "customerId", default)]
+    pub customer_id: NullInt,
+    #[serde(rename = "recommenderId", default)]
+    pub recommender_id: NullInt,
+    #[serde(rename = "levelId", default)]
+    pub level_id: NullInt,
     #[serde(rename = "version", deserialize_with = "i32_from_null_or_int", default)]
     pub version: i32,
-    #[serde(rename = "type",              default)] pub profile_type:       NullInt32,
-    #[serde(rename = "createSuboFlag",    default)] pub create_subo_flag:   NullInt32,
-    #[serde(rename = "activeFlag",        default)] pub active_flag:        NullInt32,
-    #[serde(rename = "gender",            default)] pub gender:             NullInt32,
-    #[serde(rename = "maritalStatus",     default)] pub marital_status:     NullInt32,
-    #[serde(rename = "idType",            default)] pub id_type:            NullInt32,
-    #[serde(rename = "sourceOfIncome",    default)] pub source_of_income:   NullInt32,
-    #[serde(rename = "occupation",        default)] pub occupation:         NullInt32,
+    #[serde(rename = "type", default)]
+    pub profile_type: NullInt32,
+    #[serde(rename = "createSuboFlag", default)]
+    pub create_subo_flag: NullInt32,
+    #[serde(rename = "activeFlag", default)]
+    pub active_flag: NullInt32,
+    #[serde(rename = "gender", default)]
+    pub gender: NullInt32,
+    #[serde(rename = "maritalStatus", default)]
+    pub marital_status: NullInt32,
+    #[serde(rename = "idType", default)]
+    pub id_type: NullInt32,
+    #[serde(rename = "sourceOfIncome", default)]
+    pub source_of_income: NullInt32,
+    #[serde(rename = "occupation", default)]
+    pub occupation: NullInt32,
     // ── Bool fields ───────────────────────────────────────────────────────────
     /// JSON may be `false` or absent — plain bool is fine here.
-    #[serde(rename = "idVerification", default)] pub id_verification: bool,
+    #[serde(rename = "idVerification", default)]
+    pub id_verification: bool,
 }
 
 /// Merchant info embedded inside `CustomerValue`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Merchant {
-    #[serde(rename = "merchantDesc",     default)] pub merchant_desc:      NullString,
-    #[serde(rename = "currencyCode",     default)] pub currency_code:      NullString,
-    #[serde(rename = "merchantTimeZone", default)] pub merchant_time_zone: NullString,
-    #[serde(rename = "creator",          default)] pub creator:            NullString,
-    #[serde(rename = "deleteFlag",       default)] pub delete_flag:        NullString,
-    #[serde(rename = "customerId",       default)] pub customer_id:        NullInt,
-    #[serde(rename = "parentId",         default)] pub parent_id:          NullInt,
-    #[serde(rename = "groupId",          default)] pub group_id:           NullInt,
-    #[serde(rename = "deptId",           default)] pub dept_id:            NullInt,
-    #[serde(rename = "status",           default)] pub status:             NullInt32,
-    #[serde(rename = "type",             default)] pub merchant_type:      NullInt32,
+    #[serde(rename = "merchantDesc", default)]
+    pub merchant_desc: NullString,
+    #[serde(rename = "currencyCode", default)]
+    pub currency_code: NullString,
+    #[serde(rename = "merchantTimeZone", default)]
+    pub merchant_time_zone: NullString,
+    #[serde(rename = "creator", default)]
+    pub creator: NullString,
+    #[serde(rename = "deleteFlag", default)]
+    pub delete_flag: NullString,
+    #[serde(rename = "customerId", default)]
+    pub customer_id: NullInt,
+    #[serde(rename = "parentId", default)]
+    pub parent_id: NullInt,
+    #[serde(rename = "groupId", default)]
+    pub group_id: NullInt,
+    #[serde(rename = "deptId", default)]
+    pub dept_id: NullInt,
+    #[serde(rename = "status", default)]
+    pub status: NullInt32,
+    #[serde(rename = "type", default)]
+    pub merchant_type: NullInt32,
 }
 
 /// Mirrors Go's `CustomerAdditionalInfo` — aligned to actual USS JSON response.
@@ -377,57 +498,81 @@ pub struct Merchant {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomerAdditionalInfo {
     // ── Timestamps ────────────────────────────────────────────────────────────
-    #[serde(rename = "createTime", default)] pub create_time: FlexTime,
-    #[serde(rename = "updateTime", default)] pub update_time: FlexTime,
+    #[serde(rename = "createTime", default)]
+    pub create_time: FlexTime,
+    #[serde(rename = "updateTime", default)]
+    pub update_time: FlexTime,
     // ── String fields ─────────────────────────────────────────────────────────
-    #[serde(rename = "permanentAddress",      default)] pub permanent_address:       NullString,
-    #[serde(rename = "placeOfBirth",          default)] pub place_of_birth:          NullString,
-    #[serde(rename = "nationality",           default)] pub nationality:             NullString,
-    #[serde(rename = "region",                default)] pub region:                  NullString,
-    #[serde(rename = "kakao",                 default)] pub kakao:                   NullString,
-    #[serde(rename = "google",                default)] pub google:                  NullString,
-    #[serde(rename = "googleId",              default)] pub google_id:               NullString,
-    #[serde(rename = "telegramId",            default)] pub telegram_id:             NullString,
-    #[serde(rename = "glifeId",               default)] pub glife_id:               NullString,
-    #[serde(rename = "mayaId",                default)] pub maya_id:                 NullString,
-    #[serde(rename = "appleUid",              default)] pub apple_uid:               NullString,
-    #[serde(rename = "facebookUid",           default)] pub facebook_uid:            NullString,
-    #[serde(rename = "officialAppLoginStatus",default)] pub official_app_login_status: NullString,
+    #[serde(rename = "permanentAddress", default)]
+    pub permanent_address: NullString,
+    #[serde(rename = "placeOfBirth", default)]
+    pub place_of_birth: NullString,
+    #[serde(rename = "nationality", default)]
+    pub nationality: NullString,
+    #[serde(rename = "region", default)]
+    pub region: NullString,
+    #[serde(rename = "kakao", default)]
+    pub kakao: NullString,
+    #[serde(rename = "google", default)]
+    pub google: NullString,
+    #[serde(rename = "googleId", default)]
+    pub google_id: NullString,
+    #[serde(rename = "telegramId", default)]
+    pub telegram_id: NullString,
+    #[serde(rename = "glifeId", default)]
+    pub glife_id: NullString,
+    #[serde(rename = "mayaId", default)]
+    pub maya_id: NullString,
+    #[serde(rename = "appleUid", default)]
+    pub apple_uid: NullString,
+    #[serde(rename = "facebookUid", default)]
+    pub facebook_uid: NullString,
+    #[serde(rename = "officialAppLoginStatus", default)]
+    pub official_app_login_status: NullString,
     // ── Numeric fields ────────────────────────────────────────────────────────
-    #[serde(rename = "customerId", default)] pub customer_id: NullInt,
-    #[serde(rename = "usState",    default = "default_us_state")] pub us_state: NullInt32,
+    #[serde(rename = "customerId", default)]
+    pub customer_id: NullInt,
+    #[serde(rename = "usState", default = "default_us_state")]
+    pub us_state: NullInt32,
     #[serde(rename = "version", deserialize_with = "i32_from_null_or_int", default)]
     pub version: i32,
     // ── Bool fields ───────────────────────────────────────────────────────────
     /// JSON may be `true`, `false`, or **`null`** — null → false.
     /// Uses a custom deserializer because `#[serde(default)]` only applies when
     /// the key is *absent*, not when the key is present with an explicit `null`.
-    #[serde(rename = "emailVerification", deserialize_with = "bool_from_null_or_bool", default)]
+    #[serde(
+        rename = "emailVerification",
+        deserialize_with = "bool_from_null_or_bool",
+        default
+    )]
     pub email_verification: bool,
 }
 
 impl Default for CustomerAdditionalInfo {
     fn default() -> Self {
         Self {
-            create_time:              FlexTime::default(),
-            update_time:              FlexTime::default(),
-            permanent_address:        NullString::default(),
-            place_of_birth:           NullString::default(),
-            nationality:              NullString::default(),
-            region:                   NullString::default(),
-            kakao:                    NullString::default(),
-            google:                   NullString::default(),
-            google_id:                NullString::default(),
-            telegram_id:              NullString::default(),
-            glife_id:                 NullString::default(),
-            maya_id:                  NullString::default(),
-            apple_uid:                NullString::default(),
-            facebook_uid:             NullString::default(),
+            create_time: FlexTime::default(),
+            update_time: FlexTime::default(),
+            permanent_address: NullString::default(),
+            place_of_birth: NullString::default(),
+            nationality: NullString::default(),
+            region: NullString::default(),
+            kakao: NullString::default(),
+            google: NullString::default(),
+            google_id: NullString::default(),
+            telegram_id: NullString::default(),
+            glife_id: NullString::default(),
+            maya_id: NullString::default(),
+            apple_uid: NullString::default(),
+            facebook_uid: NullString::default(),
             official_app_login_status: NullString::default(),
-            customer_id:              NullInt::default(),
-            us_state:                 NullInt32 { val: -1, valid: false },
-            version:                  0,
-            email_verification:       false,
+            customer_id: NullInt::default(),
+            us_state: NullInt32 {
+                val: -1,
+                valid: false,
+            },
+            version: 0,
+            email_verification: false,
         }
     }
 }
@@ -436,28 +581,48 @@ impl Default for CustomerAdditionalInfo {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CustomerValue {
     // ── String / identity fields ──────────────────────────────────────────────
-    #[serde(rename = "customerName",              default)] pub customer_name:               NullString,
-    #[serde(rename = "customerNameExcludeMerchant",default)] pub customer_name_excl_merchant: NullString,
-    #[serde(rename = "email",                     default)] pub email:                       NullString,
-    #[serde(rename = "merchantCode",              default)] pub merchant_code:               NullString,
-    #[serde(rename = "password",                  default)] pub password:                    NullString,
-    #[serde(rename = "paymentPassword",           default)] pub payment_password:            NullString,
-    #[serde(rename = "loginLanguage",             default)] pub login_language:              NullString,
-    #[serde(rename = "idVerificationStatus",      default)] pub id_verification_status:      NullString,
+    #[serde(rename = "customerName", default)]
+    pub customer_name: NullString,
+    #[serde(rename = "customerNameExcludeMerchant", default)]
+    pub customer_name_excl_merchant: NullString,
+    #[serde(rename = "email", default)]
+    pub email: NullString,
+    #[serde(rename = "merchantCode", default)]
+    pub merchant_code: NullString,
+    #[serde(rename = "password", default)]
+    pub password: NullString,
+    #[serde(rename = "paymentPassword", default)]
+    pub payment_password: NullString,
+    #[serde(rename = "loginLanguage", default)]
+    pub login_language: NullString,
+    #[serde(rename = "idVerificationStatus", default)]
+    pub id_verification_status: NullString,
     // ── Numeric fields ────────────────────────────────────────────────────────
-    #[serde(rename = "customerId",    default)] pub customer_id:    NullInt,
-    #[serde(rename = "merchantId",    default)] pub merchant_id:    NullInt,
-    #[serde(rename = "systemId",      default)] pub system_id:      NullInt,
-    #[serde(rename = "activeFlag",    default)] pub active_flag:    NullInt32,
-    #[serde(rename = "hashAlgorithm", default)] pub hash_algorithm: NullInt32,
+    #[serde(rename = "customerId", default)]
+    pub customer_id: NullInt,
+    #[serde(rename = "merchantId", default)]
+    pub merchant_id: NullInt,
+    #[serde(rename = "systemId", default)]
+    pub system_id: NullInt,
+    #[serde(rename = "activeFlag", default)]
+    pub active_flag: NullInt32,
+    #[serde(rename = "hashAlgorithm", default)]
+    pub hash_algorithm: NullInt32,
     // ── Time fields ───────────────────────────────────────────────────────────
-    #[serde(rename = "errorTime",     default)] pub error_time:     FlexTime,
+    #[serde(rename = "errorTime", default)]
+    pub error_time: FlexTime,
     // ── Nested objects ────────────────────────────────────────────────────────
-    #[serde(rename = "profile",                default)] pub profile:                  Profile,
-    #[serde(rename = "merchant",               default)] pub merchant:                 Merchant,
+    #[serde(rename = "profile", default)]
+    pub profile: Profile,
+    #[serde(rename = "merchant", default)]
+    pub merchant: Merchant,
     // `null_as_default` handles both absent key AND explicit `null` in JSON.
     // (`#[serde(default)]` alone only handles the absent-key case.)
-    #[serde(rename = "customerAdditionalInfo", default, deserialize_with = "null_as_default")]
+    #[serde(
+        rename = "customerAdditionalInfo",
+        default,
+        deserialize_with = "null_as_default"
+    )]
     pub customer_additional_info: CustomerAdditionalInfo,
 }
 
@@ -466,15 +631,19 @@ pub struct CustomerValue {
 /// JSON shape: `{ "success": true, "value": { … } }`
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomerInfo {
-    #[serde(default)] pub success: bool,
-    #[serde(default)] pub value:   CustomerValue,
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub value: CustomerValue,
 }
 
 /// Mirrors Go's `PasswordResetTokenRequest`.
 #[derive(Debug, Serialize)]
 pub struct PasswordResetTokenRequest {
-    #[serde(rename = "customerName")] pub customer_name: String,
-    #[serde(rename = "merchantCode")] pub merchant_code: String,
+    #[serde(rename = "customerName")]
+    pub customer_name: String,
+    #[serde(rename = "merchantCode")]
+    pub merchant_code: String,
 }
 
 /// Mirrors Go's `PasswordResetTokenResponse`.
@@ -482,8 +651,10 @@ pub struct PasswordResetTokenRequest {
 /// JSON shape: `{ "success": true, "value": "TOKEN_STRING" }`
 #[derive(Debug, Deserialize)]
 pub struct PasswordResetTokenResponse {
-    #[serde(default)] pub success: bool,
-    #[serde(default)] pub value:   String,
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub value: String,
 }
 
 /// Mirrors Go's `CustomerPersonalInfo` — envelope for personal info API.
@@ -491,67 +662,126 @@ pub struct PasswordResetTokenResponse {
 /// JSON shape: `{ "success": true, "value": { … } }`
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomerPersonalInfo {
-    #[serde(default)] pub success: bool,
-    #[serde(default)] pub value:   CustomerPersonalInfoValue,
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub value: CustomerPersonalInfoValue,
 }
 
 /// Mirrors Go's `CustomerPersonalInfoValue` — full personal info from
 /// `GET /customer/personal-info?customerId=xxx` (unencrypted field values).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CustomerPersonalInfoValue {
-    #[serde(rename = "birthday",                default)] pub birthday:                 FlexTime,
-    #[serde(rename = "passwordLastModifyDate",  default)] pub password_last_modify_date: FlexTime,
-    #[serde(rename = "placeOfBirth",            default)] pub place_of_birth:           NullString,
-    #[serde(rename = "mayaId",                  default)] pub maya_id:                  NullString,
-    #[serde(rename = "merchantCode",            default)] pub merchant_code:            NullString,
-    #[serde(rename = "customerName",            default)] pub customer_name:            NullString,
-    #[serde(rename = "stateValue",              default)] pub state_value:              NullString,
-    #[serde(rename = "appleUid",                default)] pub apple_uid:                NullString,
-    #[serde(rename = "nickname",                default)] pub nickname:                 NullString,
-    #[serde(rename = "payeeName",               default)] pub payee_name:               NullString,
-    #[serde(rename = "mobileNo",                default)] pub mobile_no:                NullString,
-    #[serde(rename = "countryCode",             default)] pub country_code:             NullString,
-    #[serde(rename = "qqNo",                    default)] pub qq_no:                    NullString,
-    #[serde(rename = "wechat",                  default)] pub wechat:                   NullString,
-    #[serde(rename = "lineId",                  default)] pub line_id:                  NullString,
-    #[serde(rename = "facebookId",              default)] pub facebook_id:              NullString,
-    #[serde(rename = "whatsAppId",              default)] pub whats_app_id:             NullString,
-    #[serde(rename = "idNumber",                default)] pub id_number:                NullString,
-    #[serde(rename = "zalo",                    default)] pub zalo:                     NullString,
-    #[serde(rename = "password",                default)] pub password:                 NullString,
-    #[serde(rename = "telegram",                default)] pub telegram:                 NullString,
-    #[serde(rename = "google",                  default)] pub google:                   NullString,
-    #[serde(rename = "facebookUid",             default)] pub facebook_uid:             NullString,
-    #[serde(rename = "googleId",                default)] pub google_id:                NullString,
-    #[serde(rename = "idVerificationStatus",    default)] pub id_verification_status:   NullString,
-    #[serde(rename = "glifeId",                 default)] pub glife_id:                 NullString,
-    #[serde(rename = "paymentPassword",         default)] pub payment_password:         NullString,
-    #[serde(rename = "city",                    default)] pub city:                     NullString,
-    #[serde(rename = "kakao",                   default)] pub kakao:                    NullString,
-    #[serde(rename = "zipcode",                 default)] pub zipcode:                  NullString,
-    #[serde(rename = "address",                 default)] pub address:                  NullString,
-    #[serde(rename = "twitter",                 default)] pub twitter:                  NullString,
-    #[serde(rename = "viber",                   default)] pub viber:                    NullString,
-    #[serde(rename = "appleId",                 default)] pub apple_id:                 NullString,
-    #[serde(rename = "email",                   default)] pub email:                    NullString,
-    #[serde(rename = "permanentAddress",        default)] pub permanent_address:        NullString,
-    #[serde(rename = "region",                  default)] pub region:                   NullString,
-    #[serde(rename = "nationality",             default)] pub nationality:              NullString,
-    #[serde(rename = "customerId",              default)] pub customer_id:              NullInt,
-    #[serde(rename = "recommenderId",           default)] pub recommender_id:           NullInt,
-    #[serde(rename = "gender",                  default)] pub gender:                   NullInt32,
-    #[serde(rename = "idType",                  default)] pub id_type:                  NullInt32,
-    #[serde(rename = "type",                    default)] pub customer_type:            NullInt32,
-    #[serde(rename = "maritalStatus",           default)] pub marital_status:           NullInt32,
-    #[serde(rename = "occupation",              default)] pub occupation:               NullInt32,
-    #[serde(rename = "sourceOfIncome",          default)] pub source_of_income:         NullInt32,
-    #[serde(rename = "usState",                 default)] pub us_state:                 NullInt32,
-    #[serde(rename = "isEmailVerification", deserialize_with = "bool_from_null_or_bool", default)]
+    #[serde(rename = "birthday", default)]
+    pub birthday: FlexTime,
+    #[serde(rename = "passwordLastModifyDate", default)]
+    pub password_last_modify_date: FlexTime,
+    #[serde(rename = "placeOfBirth", default)]
+    pub place_of_birth: NullString,
+    #[serde(rename = "mayaId", default)]
+    pub maya_id: NullString,
+    #[serde(rename = "merchantCode", default)]
+    pub merchant_code: NullString,
+    #[serde(rename = "customerName", default)]
+    pub customer_name: NullString,
+    #[serde(rename = "stateValue", default)]
+    pub state_value: NullString,
+    #[serde(rename = "appleUid", default)]
+    pub apple_uid: NullString,
+    #[serde(rename = "nickname", default)]
+    pub nickname: NullString,
+    #[serde(rename = "payeeName", default)]
+    pub payee_name: NullString,
+    #[serde(rename = "mobileNo", default)]
+    pub mobile_no: NullString,
+    #[serde(rename = "countryCode", default)]
+    pub country_code: NullString,
+    #[serde(rename = "qqNo", default)]
+    pub qq_no: NullString,
+    #[serde(rename = "wechat", default)]
+    pub wechat: NullString,
+    #[serde(rename = "lineId", default)]
+    pub line_id: NullString,
+    #[serde(rename = "facebookId", default)]
+    pub facebook_id: NullString,
+    #[serde(rename = "whatsAppId", default)]
+    pub whats_app_id: NullString,
+    #[serde(rename = "idNumber", default)]
+    pub id_number: NullString,
+    #[serde(rename = "zalo", default)]
+    pub zalo: NullString,
+    #[serde(rename = "password", default)]
+    pub password: NullString,
+    #[serde(rename = "telegram", default)]
+    pub telegram: NullString,
+    #[serde(rename = "google", default)]
+    pub google: NullString,
+    #[serde(rename = "facebookUid", default)]
+    pub facebook_uid: NullString,
+    #[serde(rename = "googleId", default)]
+    pub google_id: NullString,
+    #[serde(rename = "idVerificationStatus", default)]
+    pub id_verification_status: NullString,
+    #[serde(rename = "glifeId", default)]
+    pub glife_id: NullString,
+    #[serde(rename = "paymentPassword", default)]
+    pub payment_password: NullString,
+    #[serde(rename = "city", default)]
+    pub city: NullString,
+    #[serde(rename = "kakao", default)]
+    pub kakao: NullString,
+    #[serde(rename = "zipcode", default)]
+    pub zipcode: NullString,
+    #[serde(rename = "address", default)]
+    pub address: NullString,
+    #[serde(rename = "twitter", default)]
+    pub twitter: NullString,
+    #[serde(rename = "viber", default)]
+    pub viber: NullString,
+    #[serde(rename = "appleId", default)]
+    pub apple_id: NullString,
+    #[serde(rename = "email", default)]
+    pub email: NullString,
+    #[serde(rename = "permanentAddress", default)]
+    pub permanent_address: NullString,
+    #[serde(rename = "region", default)]
+    pub region: NullString,
+    #[serde(rename = "nationality", default)]
+    pub nationality: NullString,
+    #[serde(rename = "customerId", default)]
+    pub customer_id: NullInt,
+    #[serde(rename = "recommenderId", default)]
+    pub recommender_id: NullInt,
+    #[serde(rename = "gender", default)]
+    pub gender: NullInt32,
+    #[serde(rename = "idType", default)]
+    pub id_type: NullInt32,
+    #[serde(rename = "type", default)]
+    pub customer_type: NullInt32,
+    #[serde(rename = "maritalStatus", default)]
+    pub marital_status: NullInt32,
+    #[serde(rename = "occupation", default)]
+    pub occupation: NullInt32,
+    #[serde(rename = "sourceOfIncome", default)]
+    pub source_of_income: NullInt32,
+    #[serde(rename = "usState", default)]
+    pub us_state: NullInt32,
+    #[serde(
+        rename = "isEmailVerification",
+        deserialize_with = "bool_from_null_or_bool",
+        default
+    )]
     pub is_email_verification: bool,
-    #[serde(rename = "idVerification", deserialize_with = "bool_from_null_or_bool", default)]
+    #[serde(
+        rename = "idVerification",
+        deserialize_with = "bool_from_null_or_bool",
+        default
+    )]
     pub id_verification: bool,
-    #[serde(rename = "isOfficialAppLogin",      default)] pub is_official_app_login:    NullBool,
-    #[serde(rename = "isMobileVerified",        default)] pub is_mobile_verified:       NullBool,
+    #[serde(rename = "isOfficialAppLogin", default)]
+    pub is_official_app_login: NullBool,
+    #[serde(rename = "isMobileVerified", default)]
+    pub is_mobile_verified: NullBool,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -562,8 +792,8 @@ pub struct CustomerPersonalInfoValue {
 const MAX_RESPONSE_SIZE: usize = 1024 * 100; // 100 KB
 
 /// Retry / timeout constants (mirrors Go's `NewClient` defaults).
-const MAX_RETRIES:        u32      = 3;
-const RETRY_DELAY:        Duration = Duration::from_millis(700);
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY: Duration = Duration::from_millis(700);
 const SINGLE_REQ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// USS HTTP client.
@@ -573,10 +803,12 @@ const SINGLE_REQ_TIMEOUT: Duration = Duration::from_secs(5);
 /// 5 s per-attempt timeout; cancels immediately on context cancellation.
 #[derive(Debug, Clone)]
 pub struct UssClient {
-    inner:    Client,
+    inner: Client,
     base_url: String,
     /// Trailing slash is guaranteed (e.g. `"tcg-uss-ae/"`).
     base_path: String,
+    /// Pre-computed URL for `PUT password/reset-generate`.
+    reset_generate_url: String,
 }
 
 impl UssClient {
@@ -589,13 +821,24 @@ impl UssClient {
             .build()
             .expect("Failed to build USS HTTP client");
 
-        let base_url  = cfg.host.trim_end_matches('/').to_string();
+        let base_url = cfg.host.trim_end_matches('/').to_string();
         let base_path = {
             let p = cfg.base_path.trim_end_matches('/').trim_start_matches('/');
-            if p.is_empty() { String::new() } else { format!("{p}/") }
+            if p.is_empty() {
+                String::new()
+            } else {
+                format!("{p}/")
+            }
         };
 
-        Self { inner, base_url, base_path }
+        let reset_generate_url = format!("{}/{}password/reset-generate", base_url, base_path);
+
+        Self {
+            inner,
+            base_url,
+            base_path,
+            reset_generate_url,
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -627,11 +870,12 @@ impl UssClient {
                     tracing::warn!(
                         attempt,
                         "[USSClient] attempt {}/{} timed out after {:?}",
-                        attempt, MAX_RETRIES, SINGLE_REQ_TIMEOUT
+                        attempt,
+                        MAX_RETRIES,
+                        SINGLE_REQ_TIMEOUT
                     );
-                    last_err = anyhow::anyhow!(
-                        "USS request timed out after {:?}", SINGLE_REQ_TIMEOUT
-                    );
+                    last_err =
+                        anyhow::anyhow!("USS request timed out after {:?}", SINGLE_REQ_TIMEOUT);
                 }
             }
 
@@ -667,8 +911,22 @@ impl UssClient {
             .inner
             .put(url)
             .header("Content-Type", "application/json")
-            .header("Accept",       "application/json")
+            .header("Accept", "application/json")
             .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("USS PUT request failed: {url}"))?;
+
+        read_body(resp).await
+    }
+
+    async fn do_put_bytes(&self, url: &str, body_bytes: bytes::Bytes) -> Result<bytes::Bytes> {
+        let resp = self
+            .inner
+            .put(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .body(body_bytes)
             .send()
             .await
             .with_context(|| format!("USS PUT request failed: {url}"))?;
@@ -681,18 +939,11 @@ impl UssClient {
     /// Retrieve customer information by customer name.
     ///
     /// Mirrors Go's `Client.GetCustomer`.
-    pub async fn get_customer(
-        &self,
-        customer_name: &str,
-        force: bool,
-    ) -> Result<CustomerInfo> {
+    pub async fn get_customer(&self, customer_name: &str, force: bool) -> Result<CustomerInfo> {
         let start = Instant::now();
         let url = format!(
             "{}/{}customer?customerName={}&force={}",
-            self.base_url,
-            self.base_path,
-            customer_name,
-            force
+            self.base_url, self.base_path, customer_name, force
         );
 
         tracing::info!(url = %url, "[USSClient] GetCustomer request");
@@ -711,13 +962,12 @@ impl UssClient {
             })
             .with_context(|| format!("GetCustomer request failed for '{customer_name}'"))?;
 
-        let result = serde_json::from_slice::<CustomerInfo>(&body)
-            .with_context(|| {
-                format!(
-                    "deserialization failed, raw response: {}",
-                    String::from_utf8_lossy(&body)
-                )
-            })?;
+        let result = serde_json::from_slice::<CustomerInfo>(&body).with_context(|| {
+            format!(
+                "deserialization failed, raw response: {}",
+                String::from_utf8_lossy(&body)
+            )
+        })?;
 
         tracing::info!(
             customer_name,
@@ -738,9 +988,7 @@ impl UssClient {
         let start = Instant::now();
         let url = format!(
             "{}/{}customer/personal-info?customerId={}",
-            self.base_url,
-            self.base_path,
-            customer_id
+            self.base_url, self.base_path, customer_id
         );
 
         tracing::info!(url = %url, "[USSClient] GetCustomerPersonalInfo request");
@@ -757,15 +1005,16 @@ impl UssClient {
                 );
                 e
             })
-            .with_context(|| format!("GetCustomerPersonalInfo request failed for customerId={customer_id}"))?;
-
-        let result = serde_json::from_slice::<CustomerPersonalInfo>(&body)
             .with_context(|| {
-                format!(
-                    "deserialization failed, raw response: {}",
-                    String::from_utf8_lossy(&body)
-                )
+                format!("GetCustomerPersonalInfo request failed for customerId={customer_id}")
             })?;
+
+        let result = serde_json::from_slice::<CustomerPersonalInfo>(&body).with_context(|| {
+            format!(
+                "deserialization failed, raw response: {}",
+                String::from_utf8_lossy(&body)
+            )
+        })?;
 
         tracing::info!(
             customer_id,
@@ -784,10 +1033,7 @@ impl UssClient {
         merchant_code: &str,
     ) -> Result<PasswordResetTokenResponse> {
         let start = Instant::now();
-        let url = format!(
-            "{}/{}password/reset-generate",
-            self.base_url, self.base_path
-        );
+        let url = &self.reset_generate_url;
 
         tracing::info!(
             url = %url,
@@ -800,9 +1046,17 @@ impl UssClient {
             customer_name: customer_name.to_string(),
             merchant_code: merchant_code.to_string(),
         };
+        // Serialize once; each retry gets an O(1) Arc clone
+        let body_bytes = bytes::Bytes::from(
+            serde_json::to_vec(&payload)
+                .with_context(|| "GeneratePasswordResetToken: serialize payload")?,
+        );
 
         let body = self
-            .do_with_retry(|| self.do_put(&url, &payload))
+            .do_with_retry(|| {
+                let b = body_bytes.clone();
+                self.do_put_bytes(&url, b)
+            })
             .await
             .map_err(|e| {
                 tracing::warn!(
@@ -818,8 +1072,8 @@ impl UssClient {
                 format!("GeneratePasswordResetToken request failed for '{customer_name}'")
             })?;
 
-        let result = serde_json::from_slice::<PasswordResetTokenResponse>(&body)
-            .with_context(|| {
+        let result =
+            serde_json::from_slice::<PasswordResetTokenResponse>(&body).with_context(|| {
                 format!(
                     "deserialization failed, raw response: {}",
                     String::from_utf8_lossy(&body)

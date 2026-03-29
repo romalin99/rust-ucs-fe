@@ -15,16 +15,10 @@
 /// `histogram_quantile(0.99, rate(..._bucket[5m]))`.
 ///
 /// All metrics carry a const label `service = "<service_name>"` matching Go.
-use axum::{
-    body::Body,
-    http::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, http::Request, middleware::Next, response::Response};
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, Opts,
-    register_counter_vec, register_histogram_vec,
+    CounterVec, HistogramOpts, HistogramVec, Opts, register_counter_vec, register_histogram_vec,
 };
 use std::time::Instant;
 
@@ -48,7 +42,9 @@ static REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
             "HTTP request duration in seconds",
         )
         .const_label("service", SERVICE_NAME)
-        .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+        .buckets(vec![
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+        ]),
         &["method", "path", "status"]
     )
     .expect("http_request_duration_seconds registration failed")
@@ -58,7 +54,9 @@ static REQUEST_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new("http_request_size_bytes", "HTTP request size in bytes")
             .const_label("service", SERVICE_NAME)
-            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0]),
+            .buckets(vec![
+                64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0
+            ]),
         &["method", "path", "status"]
     )
     .expect("http_request_size_bytes registration failed")
@@ -68,7 +66,9 @@ static RESPONSE_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new("http_response_size_bytes", "HTTP response size in bytes")
             .const_label("service", SERVICE_NAME)
-            .buckets(vec![64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0]),
+            .buckets(vec![
+                64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0
+            ]),
         &["method", "path", "status"]
     )
     .expect("http_response_size_bytes registration failed")
@@ -85,12 +85,14 @@ const SKIP_PATHS: &[&str] = &["/ping", "/swagger", "/favicon.ico", "/metrics", "
 /// Mirrors Go's `FiberPrometheus.Middleware`.
 /// Note: Go never increments `activeRequests` gauge; we match that behavior.
 pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
-    let raw_path = req.uri().path().to_string();
-    let method   = req.method().to_string();
-
-    if SKIP_PATHS.contains(&raw_path.as_str()) {
+    // Check skip-path with a borrowed &str — no allocation
+    if SKIP_PATHS.contains(&req.uri().path()) {
         return next.run(req).await;
     }
+
+    // Only allocate for non-skipped requests that actually need metrics
+    let raw_path = req.uri().path().to_string();
+    let method = req.method().to_string();
 
     let matched = req
         .extensions()
@@ -99,7 +101,8 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
         .unwrap_or_else(|| raw_path.clone());
 
     let start = Instant::now();
-    let request_size = req.headers()
+    let request_size = req
+        .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<f64>().ok())
@@ -109,19 +112,32 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
 
     let status_code = response.status().as_u16();
     let duration = start.elapsed().as_secs_f64();
-    let status   = status_code.to_string();
-    let labels   = [method.as_str(), matched.as_str(), status.as_str()];
+    // Stack-allocate the 3-digit status string — no heap allocation
+    let mut status_buf = [b'0'; 3];
+    let n = status_code as u32;
+    status_buf[0] = b'0' + (n / 100) as u8;
+    status_buf[1] = b'0' + ((n / 10) % 10) as u8;
+    status_buf[2] = b'0' + (n % 10) as u8;
+    let status = std::str::from_utf8(&status_buf).unwrap_or("000");
+    let labels = [method.as_str(), matched.as_str(), status];
 
-    let response_size = response.headers()
+    let response_size = response
+        .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0);
 
     REQUESTS_TOTAL.with_label_values(&labels).inc();
-    REQUEST_DURATION.with_label_values(&labels).observe(duration);
-    REQUEST_SIZE.with_label_values(&labels).observe(request_size);
-    RESPONSE_SIZE.with_label_values(&labels).observe(response_size);
+    REQUEST_DURATION
+        .with_label_values(&labels)
+        .observe(duration);
+    REQUEST_SIZE
+        .with_label_values(&labels)
+        .observe(request_size);
+    RESPONSE_SIZE
+        .with_label_values(&labels)
+        .observe(response_size);
 
     response
 }
