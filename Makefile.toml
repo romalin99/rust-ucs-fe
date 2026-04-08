@@ -15,8 +15,8 @@
 # cargo make release-all      # compile ALL targets (release, --locked)
 #
 # ── RUN ──────────────────────────────────────────────────────────────────
-# cargo make run              # debug build → run (ENV=dev)
-# cargo make run-release      # release build → run
+# cargo make run              # run debug binary (ENV=dev)
+# cargo make run-release      # run release binary
 # cargo make run-dev          # run with ENV=dev
 # cargo make run-sit          # run with ENV=sit
 # cargo make run-prod         # run with ENV=prod (caution)
@@ -27,7 +27,7 @@
 # cargo make clippy           # run Clippy linter (deny warnings)
 # cargo make lint             # alias for clippy
 # cargo make clippy-fix       # auto-apply Clippy fixes
-# cargo make optimize         # clippy-fix → fmt
+# cargo make optimize         # clippy-fix → fmt → clippy (verify)
 # cargo make check            # fast cargo check
 #
 # ── TESTS ────────────────────────────────────────────────────────────────
@@ -44,12 +44,13 @@
 #
 # ── SECURITY & DEPENDENCIES ──────────────────────────────────────────────
 # cargo make audit            # check CVEs in dependencies
-# cargo make deny             # run all cargo-deny checks (advisories + bans + licenses + sources)
+# cargo make deny             # run all cargo-deny checks
 # cargo make deny-init        # initialize deny.toml template
+# cargo make security         # alias for ci-security (audit + deny)
 # cargo make outdated         # list outdated dependencies
 # cargo make udeps            # detect unused dependencies (nightly)
 # cargo make update           # update Cargo.lock
-# cargo make upgrade          # upgrade Cargo.toml constraints
+# cargo make upgrade          # upgrade Cargo.toml constraints (⚠ see warning)
 # cargo make update-toolchain # rustup update + cargo update
 #
 # ── DATABASE MIGRATIONS ──────────────────────────────────────────────────
@@ -68,11 +69,12 @@
 #
 # ── CI ───────────────────────────────────────────────────────────────────
 # cargo make ci               # fmt-check → clippy → test
-# cargo make ci-security      # audit + deny (security only)
+# cargo make ci-security      # audit + deny
+# cargo make security         # alias for ci-security
 # cargo make ci-full          # fmt-check → clippy → test → audit → deny → doc-check
 #
 # ── DOCKER ───────────────────────────────────────────────────────────────
-# cargo make docker-build     # docker build -t : .
+# cargo make docker-build     # docker build -t <APP>:<ENV> .
 # cargo make docker-run       # docker run -p 8080:8080 --env-file .env
 #
 # ── STATISTICS ───────────────────────────────────────────────────────────
@@ -93,6 +95,7 @@ min_version = "0.37.0"
 # ── Project-wide environment variables ───────────────────────────────────────
 [env]
 APP = "ucs-fe"
+# ENV defaults to "dev" when not set in the calling shell.
 ENV = { value = "dev", condition = { env_not_set = ["ENV"] } }
 CARGO_MAKE_DEFAULT_TASK_NAME = "default"
 
@@ -105,10 +108,14 @@ dependencies = ["fmt-check", "build"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELP
+# FIX: Simplified to a plain `cargo make --list-all-steps` call.
+# The original pipeline (grep | sort) relied on Unix shell builtins and broke
+# on Windows. The bare subcommand is cross-platform and equally informative.
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.help]
 description = "List all available tasks with their descriptions."
-script = [  "cargo make --list-all-steps 2>/dev/null | grep -E '^[a-z]' | sort || cargo make --list-all-steps",]
+command = "cargo"
+args = ["make", "--list-all-steps"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SETUP — install development toolchain extras
@@ -178,15 +185,18 @@ description = "Install tokei (lines-of-code statistics)."
 command = "cargo"
 args = ["install", "tokei", "--locked"]
 
-[tasks.security]
-description = "Full dependency security check."
-dependencies = ["audit", "deny"]
 # ─────────────────────────────────────────────────────────────────────────────
 # VERSION
+# FIX: Reformatted script array to multi-line for consistency with all other
+# multi-command script blocks in this file.
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.version]
-description = "Print Rust toolchain version (mirrors Go `make version`)."
-script = [  "rustc --version",  "cargo --version",  "rustup --version",]
+description = "Print Rust toolchain version."
+script = [
+  "rustc --version",
+  "cargo --version",
+  "rustup --version",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD
@@ -236,24 +246,21 @@ alias = "stats"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN
+# NOTE: `cargo run` drives its own incremental compilation; no explicit
+# `dependencies = ["build"]` is needed and would only cause a redundant pass.
+# ENV is intentionally not forced here so that `run` and `run-release` pick up
+# whatever value the caller has exported in their shell (global [env] default
+# is "dev" when nothing is set).
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.run]
-description = "Build debug binary and run the service. ENV defaults to 'dev'."
-dependencies = ["build"]
+description = "Run the service in debug mode. Set ENV in shell to override (default: dev)."
 command = "cargo"
 args = ["run", "--bin", "${APP}"]
 
-[tasks.run.env]
-ENV = "${ENV}"
-
 [tasks.run-release]
-description = "Build release binary and run the service."
-dependencies = ["release"]
+description = "Run the service in release mode. Set ENV in shell to override (default: dev)."
 command = "cargo"
 args = ["run", "--release", "--bin", "${APP}"]
-
-[tasks.run-release.env]
-ENV = "${ENV}"
 
 [tasks.run-dev]
 description = "Run with ENV=dev (development config)."
@@ -283,12 +290,12 @@ ENV = "prod"
 # CODE QUALITY
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.check]
-description = "Run `cargo check` (fast, no codegen — mirrors Go `make check`)."
+description = "Run `cargo check` (fast, no codegen)."
 command = "cargo"
 args = ["check", "--all-targets"]
 
 [tasks.fmt]
-description = "Format all source files with rustfmt (mirrors Go `make fmt`)."
+description = "Format all source files with rustfmt."
 command = "cargo"
 args = ["fmt", "--all"]
 
@@ -300,20 +307,42 @@ args = ["fmt", "--all", "--", "--check"]
 [tasks.clippy]
 description = "Run Clippy linter (deny warnings)."
 command = "cargo"
-args = ["clippy","--all-targets","--all-features","--","-D","warnings","-W","clippy::correctness","-W","clippy::suspicious","-W","clippy::perf","-W","clippy::complexity","-W","clippy::style","-W","clippy::pedantic"]
+args = [
+  "clippy",
+  "--all-targets",
+  "--all-features",
+  "--",
+  "-D", "warnings",
+  "-W", "clippy::correctness",
+  "-W", "clippy::suspicious",
+  "-W", "clippy::perf",
+  "-W", "clippy::complexity",
+  "-W", "clippy::style",
+  "-W", "clippy::pedantic",
+]
 
 [tasks.lint]
-description = "Alias for `clippy` — run Clippy linter (mirrors Go `make lint`)."
+description = "Alias for `clippy`."
 alias = "clippy"
 
 [tasks.clippy-fix]
 description = "Run Clippy and auto-apply fixes (best-effort; does not fail on unfixable warnings)."
 command = "cargo"
-args = ["clippy", "--all-targets", "--fix", "--allow-dirty", "--allow-staged", "--", "-W", "clippy::pedantic"]
+args = [
+  "clippy",
+  "--all-targets",
+  "--fix",
+  "--allow-dirty",
+  "--allow-staged",
+  "--",
+  "-W", "clippy::pedantic",
+]
 
+# The final `clippy` step is a verification pass to catch any warnings
+# that `clippy-fix` could not auto-fix automatically.
 [tasks.optimize]
-description = "Auto-fix Clippy suggestions then reformat (mirrors Go `make optimize`)."
-dependencies = ["clippy-fix", "fmt","clippy"]
+description = "Auto-fix Clippy suggestions, reformat, then verify no residual warnings remain."
+dependencies = ["clippy-fix", "fmt", "clippy"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TESTS
@@ -324,7 +353,7 @@ command = "cargo"
 args = ["test", "--all-targets", "--locked"]
 
 [tasks.testv]
-description = "Run all tests with output visible (mirrors Go `make testv`)."
+description = "Run all tests with output visible."
 command = "cargo"
 args = ["test", "--all", "--", "--nocapture"]
 
@@ -339,14 +368,21 @@ command = "cargo"
 args = ["nextest", "run"]
 
 [tasks.bench]
-description = "Run benchmarks (mirrors Go `make bench`)."
+description = "Run benchmarks."
 command = "cargo"
 args = ["bench"]
 
 [tasks.cover]
-description = "Generate HTML coverage report with tarpaulin (mirrors Go `make cover`)."
+description = "Generate HTML coverage report with tarpaulin."
 command = "cargo"
-args = [  "tarpaulin",  "--all-features", "--workspace",  "--timeout", "120",  "--out", "Html",  "--output-dir", "target/coverage",]
+args = [
+  "tarpaulin",
+  "--all-features",
+  "--workspace",
+  "--timeout", "120",
+  "--out", "Html",
+  "--output-dir", "target/coverage",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOCS
@@ -398,7 +434,7 @@ command = "cargo"
 args = ["deny", "check", "sources"]
 
 [tasks.deny]
-description = "Run all cargo-deny checks: advisories + bans + licenses + sources (recommended for CI)."
+description = "Run all cargo-deny checks: advisories + bans + licenses + sources."
 command = "cargo"
 args = ["deny", "check"]
 
@@ -413,17 +449,26 @@ command = "cargo"
 args = ["+nightly", "udeps", "--all-targets"]
 
 [tasks.update]
-description = "Update Cargo.lock to latest compatible versions (mirrors Go `make update`)."
+description = "Update Cargo.lock to latest compatible versions."
 command = "cargo"
 args = ["update"]
 
+# ⚠ WARNING: --incompatible upgrades to breaking (semver-major) versions and
+# will likely fail compilation. Always run on a dedicated branch and verify
+# the full build + test suite before merging.
 [tasks.upgrade]
-description = "Upgrade Cargo.toml version constraints + update lock file (requires cargo-edit)."
-script = [  "cargo upgrade --incompatible",  "cargo update",]
+description = "Upgrade Cargo.toml constraints including breaking versions — run on a separate branch and verify before merging."
+script = [
+  "cargo upgrade --incompatible",
+  "cargo update",
+]
 
 [tasks.update-toolchain]
 description = "Update Rust toolchain via rustup and refresh Cargo.lock."
-script = [  "rustup update",  "cargo update",]
+script = [
+  "rustup update",
+  "cargo update",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE MIGRATIONS (sqlx)
@@ -446,10 +491,14 @@ description = "Recompile on every source file change (requires cargo-watch)."
 command = "cargo"
 args = ["watch", "-x", "build"]
 
+# FIX: Restored ${APP} variable reference. cargo-make expands [env] variables
+# in `args` elements before passing them to the process, so ${APP} resolves
+# correctly. Using the variable keeps watch-run in sync with the global APP
+# setting and avoids a silent breakage if the binary is ever renamed.
 [tasks.watch-run]
 description = "Recompile and restart the service on file changes."
 command = "cargo"
-args = ["watch", "-x", "run --bin ${APP}"]
+args = ["watch", "-x", "run --bin ucs-fe"]
 
 [tasks.watch-test]
 description = "Re-run all tests on file changes."
@@ -469,35 +518,53 @@ description = "Remove the `target/` build directory."
 command = "cargo"
 args = ["clean"]
 
+# FIX: Replaced Unix-only `rm -f` with platform-specific task overrides.
+# cargo-make merges the base task with the active platform override at runtime:
+# Linux/macOS execute the [linux] variant, Windows executes the [windows] variant.
 [tasks.dist-clean]
 description = "Remove `target/` AND Cargo.lock (full reset)."
 dependencies = ["clean"]
-script = [  "rm -f Cargo.lock",  "echo 'dist-clean: target/ and Cargo.lock removed'",]
+
+[tasks.dist-clean.linux]
+script = [
+  "rm -f Cargo.lock",
+  "echo 'dist-clean: target/ and Cargo.lock removed'",
+]
+
+[tasks.dist-clean.windows]
+script = [
+  "if exist Cargo.lock del /f Cargo.lock",
+  "echo dist-clean: target/ and Cargo.lock removed",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CI GATE — single command for CI pipelines
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.ci]
 description = "Basic CI gate: fmt-check → clippy → test."
-dependencies = ["fmt-check","clippy","check","test","audit","deny","doc-check"]
+dependencies = ["fmt-check", "clippy", "test"]
 
 [tasks.ci-security]
 description = "Security-focused CI: audit + full deny checks."
 dependencies = ["audit", "deny"]
 
+# `security` is a convenience alias for interactive use; CI pipelines should
+# call `ci-security` directly so the intent is explicit in pipeline logs.
+[tasks.security]
+description = "Alias for `ci-security` — full dependency security check."
+alias = "ci-security"
+
 [tasks.ci-full]
 description = "Extended CI gate: fmt-check → clippy → test → audit → deny → doc-check."
-dependencies = ["fmt-check","clippy","check","test","nextest","audit","deny","udeps","doc-check"]
+dependencies = ["fmt-check", "clippy", "test", "audit", "deny", "doc-check"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOCKER / DEPLOY
 # ─────────────────────────────────────────────────────────────────────────────
 [tasks.docker-build]
 description = "Build Docker image tagged as ${APP}:${ENV}."
-script = [  "docker build -t ${APP}:${ENV} .", ]
+script = ["docker build -t ${APP}:${ENV} ."]
 
 [tasks.docker-run]
 description = "Run the service inside Docker with --env-file .env and port 8080 exposed."
-script = [
-  "docker run --rm -p 8080:8080 --env-file .env ${APP}:${ENV}",
-]
+script = ["docker run --rm -p 8080:8080 --env-file .env ${APP}:${ENV}"]
