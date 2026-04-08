@@ -53,7 +53,7 @@ pub fn string_to_f64_default(s: &str, default: f64) -> f64 {
     if trimmed.is_empty() {
         return default;
     }
-    trimmed.parse::<f64>().unwrap_or(default)
+    trimmed.parse::<f64>().ok().filter(|v| !v.is_nan()).unwrap_or(default)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
