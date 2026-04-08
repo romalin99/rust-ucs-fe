@@ -1,4 +1,4 @@
-/// Oracle repository for TCG_UCS.MERCHANT_RULE.
+/// Oracle repository for `TCG_UCS.MERCHANT_RULE`.
 ///
 /// Uses [rust-oracle](https://github.com/kubo/rust-oracle) (`oracle` crate) for
 /// direct Oracle Database access, wrapped in an `r2d2` connection pool.
@@ -39,7 +39,7 @@ pub const DEFAULT_PREFETCH_ROWS: u32 = 100;
 pub const DEFAULT_FETCH_ARRAY_SIZE: u32 = 110;
 
 /// LOB data (≤ 128 KB) is prefetched alongside LOB locators, eliminating extra
-/// round-trips for CLOB columns (QUESTIONS, TEMPLATE_FIELDS).
+/// round-trips for CLOB columns (QUESTIONS, `TEMPLATE_FIELDS`).
 /// Only effective when `lob_locator()` is used on the statement builder.
 const LOB_PREFETCH_BYTES: u32 = 128 * 1024;
 
@@ -49,7 +49,7 @@ const LOB_PREFETCH_BYTES: u32 = 128 * 1024;
 ///
 /// Every new connection is configured with:
 /// - Statement cache (`STMT_CACHE_SIZE = 64`)
-/// - LOB prefetch (`LOB_PREFETCH_BYTES = 128 KB`)
+/// - LOB prefetch (`LOB_PREFETCH_BYTES = 128 KB`, i.e. `128 * 1024`)
 ///
 /// Mirrors Go's `pkg/oracle/Config` + `godror` driver with `appendedOptions`.
 pub struct OracleConnectionManager {
@@ -127,6 +127,7 @@ pub struct PoolConfig {
 /// Uses `build_unchecked()` so the call returns instantly with zero I/O.
 /// r2d2's background thread will create `min_idle` connections asynchronously.
 /// Connectivity is validated via [`ping_pool`] after construction.
+#[allow(clippy::needless_pass_by_value)]
 pub fn build_pool(user: &str, password: &str, connect_string: &str, cfg: PoolConfig) -> OraclePool {
     let manager = OracleConnectionManager::new(user, password, connect_string);
     r2d2::Pool::builder()
@@ -186,7 +187,7 @@ pub async fn ping_pool(pool: Arc<OraclePool>, warm_count: usize) {
 // ── Repository ────────────────────────────────────────────────────────────────
 
 /// SELECT columns (14 columns — mirrors Go's goqu-derived column list).
-/// Note: TEMPLATE_FIELDS is NOT included here; it's only read in `find_all_template_fields_as_map`.
+/// Note: `TEMPLATE_FIELDS` is NOT included here; it's only read in `find_all_template_fields_as_map`.
 const RULE_COLS_FULL: &str = "ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
                                IP_RETRY_LIMIT, ACCOUNT_RETRY_LIMIT, EMPTY_SCORE, \
                                LOCK_HOUR, BINDING_TYPE, PASSING_SCORE, \
@@ -200,24 +201,22 @@ const RULE_COLS_FULL: &str = "ID, IS_DEFAULT, MERCHANT_CODE, OPERATOR, \
 
 static SQL_FIND_BY_MC: Lazy<String> = Lazy::new(|| {
     format!(
-        "SELECT {} FROM TCG_UCS.MERCHANT_RULE \
+        "SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE \
          WHERE MERCHANT_CODE = :1 \
-         FETCH FIRST 1 ROWS ONLY",
-        RULE_COLS_FULL
+         FETCH FIRST 1 ROWS ONLY"
     )
 });
 
 static SQL_FIND_BY_MC_DEFAULT: Lazy<String> = Lazy::new(|| {
     format!(
-        "SELECT {} FROM TCG_UCS.MERCHANT_RULE \
+        "SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE \
          WHERE MERCHANT_CODE = :1 AND IS_DEFAULT = :2 \
-         FETCH FIRST 1 ROWS ONLY",
-        RULE_COLS_FULL
+         FETCH FIRST 1 ROWS ONLY"
     )
 });
 
 static SQL_FIND_ONE: Lazy<String> =
-    Lazy::new(|| format!("SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1", RULE_COLS_FULL));
+    Lazy::new(|| format!("SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1"));
 
 #[derive(Clone)]
 pub struct MerchantRuleRepository {
@@ -226,6 +225,7 @@ pub struct MerchantRuleRepository {
 }
 
 impl MerchantRuleRepository {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64) -> Self {
         Self {
             pool,
@@ -239,7 +239,9 @@ impl MerchantRuleRepository {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    /// Map a result row (14 columns: RULE_COLS_FULL) into a [`MerchantRule`].
+    /// Map a result row (14 columns: `RULE_COLS_FULL`) into a [`MerchantRule`].
+    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::cast_possible_truncation)]
     fn map_full_row(row: oracle::Row) -> Result<MerchantRule> {
         Ok(MerchantRule {
             id: row.get::<_, i64>(0).context("ID")?,
@@ -271,7 +273,7 @@ impl MerchantRuleRepository {
     /// Find a merchant rule by exact merchant code.
     ///
     /// Returns `None` when no matching row exists.
-    /// Mirrors Go's `FindByMerchantCode`.
+    /// Mirrors Go's `FindByMerchantCode` method.
     pub async fn find_by_merchant_code(&self, merchant_code: &str) -> Result<Option<MerchantRule>> {
         let pool = self.pool.clone();
         let mc = merchant_code.to_string();
@@ -292,13 +294,13 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("find_by_merchant_code timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("find_by_merchant_code timed out after {timeout:?}"))?
             .context("spawn_blocking panicked")?
     }
 
     /// Find a merchant rule by merchant code and `IS_DEFAULT` flag.
     ///
-    /// Mirrors Go's `FindByMerchantCodeAndDefault`.
+    /// Mirrors Go's `FindByMerchantCodeAndDefault` method.
     pub async fn find_by_merchant_code_and_default(
         &self,
         merchant_code: &str,
@@ -324,17 +326,15 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| {
-                anyhow!("find_by_merchant_code_and_default timed out after {:?}", timeout)
-            })?
+            .map_err(|_| anyhow!("find_by_merchant_code_and_default timed out after {timeout:?}"))?
             .context("spawn_blocking panicked")?
     }
 
     /// Slim version: selects only the 6 columns required by the verification flow.
     ///
-    /// Mirrors Go's `GetRuleConfigByMerchantCode` — uses a dedicated SELECT
-    /// (`MERCHANT_CODE, BINDING_TYPE, EMPTY_SCORE, PASSING_SCORE, QUESTIONS,
-    /// FIELD_TRANSLATIONS`) instead of fetching all 15 columns.
+    /// Mirrors Go's `GetRuleConfigByMerchantCode` method — uses a dedicated SELECT
+    /// (`MERCHANT_CODE`, `BINDING_TYPE`, `EMPTY_SCORE`, `PASSING_SCORE`, `QUESTIONS`,
+    /// `FIELD_TRANSLATIONS`) instead of fetching all 15 columns.
     pub async fn get_rule_config(&self, merchant_code: &str) -> Result<Option<MerchantRuleConfig>> {
         let pool = self.pool.clone();
         let mc = merchant_code.to_string();
@@ -350,8 +350,10 @@ impl MerchantRuleRepository {
 
             if let Some(row_result) = rows.next() {
                 let row = row_result.context("get_rule_config row read")?;
+                #[allow(clippy::cast_possible_truncation)]
                 let questions_clob: Option<String> =
                     row.get::<_, Option<String>>(4).unwrap_or(None);
+                #[allow(clippy::cast_possible_truncation)]
                 let translations_clob: Option<String> =
                     row.get::<_, Option<String>>(5).unwrap_or(None);
                 return Ok(Some(MerchantRuleConfig {
@@ -372,14 +374,14 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("get_rule_config timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("get_rule_config timed out after {timeout:?}"))?
             .context("spawn_blocking panicked")?
     }
 
     /// Load all merchant rules and build the field-config dropdown map.
     ///
     /// Only fields with `fieldAttribute == "DD"` (dropdown) are included —
-    /// mirrors Go's `FindAllTemplateFieldsAsMap` filter logic.
+    /// mirrors Go's `FindAllTemplateFieldsAsMap` method filter logic.
     ///
     /// Strategy: try Oracle 12.2 `JSON_ARRAYAGG` first (collapses N CLOB
     /// round-trips into 1). If the DB doesn't support it or the JSON is
@@ -411,11 +413,11 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("find_all_as_map timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("find_all_as_map timed out after {timeout:?}"))?
             .context("spawn_blocking panicked")?
     }
 
-    /// Fast path: aggregate all TEMPLATE_FIELDS into one JSON CLOB server-side.
+    /// Fast path: aggregate all `TEMPLATE_FIELDS` into one JSON CLOB server-side.
     fn find_all_as_map_aggregated(
         conn: &oracle::Connection,
         pool_get_ms: u128,
@@ -542,7 +544,7 @@ impl MerchantRuleRepository {
 
     /// Update `TEMPLATE_FIELDS` for a merchant.
     ///
-    /// Mirrors Go's `UpdateTemplateFieldsByMerchantCode`.
+    /// Mirrors Go's `UpdateTemplateFieldsByMerchantCode` method.
     pub async fn update_template_fields(
         &self,
         merchant_code: &str,
@@ -565,7 +567,7 @@ impl MerchantRuleRepository {
 
             let rows_affected = stmt.row_count().context("row_count")?;
             if rows_affected == 0 {
-                return Err(anyhow!("UpdateTemplateFields: no row for merchant_code={}", mc));
+                return Err(anyhow!("UpdateTemplateFields: no row for merchant_code={mc}"));
             }
             conn.commit().context("commit UpdateTemplateFields")?;
             Ok(rows_affected)
@@ -573,19 +575,21 @@ impl MerchantRuleRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("update_template_fields timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("update_template_fields timed out after {timeout:?}"))?
             .context("spawn_blocking panicked")?
     }
     // ── Additional CRUD mirrors ───────────────────────────────────────────────
 
-    /// Map an Oracle result row (using RULE_COLS_FULL column order) to `MerchantRule`.
+    /// Map an Oracle result row (using `RULE_COLS_FULL` column order) to `MerchantRule`.
     ///
     /// Column indices (0-based, 14 columns):
-    ///   0:ID 1:IS_DEFAULT 2:MERCHANT_CODE 3:OPERATOR
-    ///   4:IP_RETRY_LIMIT 5:ACCOUNT_RETRY_LIMIT 6:EMPTY_SCORE
-    ///   7:LOCK_HOUR 8:BINDING_TYPE 9:PASSING_SCORE
-    ///   10:QUESTIONS 11:FIELD_TRANSLATIONS
-    ///   12:CREATED_AT 13:UPDATED_AT
+    ///   0:`ID` 1:`IS_DEFAULT` 2:`MERCHANT_CODE` 3:`OPERATOR`
+    ///   4:`IP_RETRY_LIMIT` 5:`ACCOUNT_RETRY_LIMIT` 6:`EMPTY_SCORE`
+    ///   7:`LOCK_HOUR` 8:`BINDING_TYPE` 9:`PASSING_SCORE`
+    ///   10:`QUESTIONS` 11:`FIELD_TRANSLATIONS`
+    ///   12:`CREATED_AT` 13:`UPDATED_AT`
+    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::cast_possible_truncation)]
     fn map_rule_row(row: oracle::Row) -> anyhow::Result<MerchantRule> {
         Ok(MerchantRule {
             id: row.get::<_, i64>(0).context("ID")?,
@@ -612,7 +616,7 @@ impl MerchantRuleRepository {
         })
     }
 
-    /// Find a single merchant rule by primary key.  Mirrors Go's `FindOne`.
+    /// Find a single merchant rule by primary key.  Mirrors Go's `FindOne` method.
     pub async fn find_one(&self, id: i64) -> Result<Option<MerchantRule>> {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
@@ -633,7 +637,7 @@ impl MerchantRuleRepository {
             .context("spawn_blocking panicked")?
     }
 
-    /// Return all MERCHANT_CODE values in the table.  Mirrors Go's `GetAllMerchantCodes`.
+    /// Return all `MERCHANT_CODE` values in the table.  Mirrors Go's `GetAllMerchantCodes` method.
     pub async fn get_all_merchant_codes(&self) -> Result<Vec<String>> {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
@@ -664,7 +668,7 @@ impl MerchantRuleRepository {
 
     /// Insert a new merchant rule and return the generated `ID`.
     ///
-    /// Fetches the next sequence value first, then inserts — mirrors Go's `Insert`.
+    /// Fetches the next sequence value first, then inserts — mirrors Go's `Insert` method.
     pub async fn insert(&self, rule: MerchantRule) -> Result<i64> {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
@@ -716,7 +720,7 @@ impl MerchantRuleRepository {
             .context("spawn_blocking panicked")?
     }
 
-    /// Full UPDATE of a merchant rule row by primary key.  Mirrors Go's `Update`.
+    /// Full UPDATE of a merchant rule row by primary key.  Mirrors Go's `Update` method.
     pub async fn update(&self, rule: MerchantRule) -> Result<u64> {
         let id = rule.id;
         let pool = self.pool.clone();
@@ -763,7 +767,7 @@ impl MerchantRuleRepository {
 
             let rows = stmt.row_count().context("row_count")?;
             if rows == 0 {
-                return Err(anyhow!("MerchantRule UPDATE: no row for id={}", id));
+                return Err(anyhow!("MerchantRule UPDATE: no row for id={id}"));
             }
             conn.commit().context("MerchantRule UPDATE commit")?;
             Ok(rows)
@@ -775,7 +779,7 @@ impl MerchantRuleRepository {
             .context("spawn_blocking panicked")?
     }
 
-    /// Delete a merchant rule row by primary key.  Mirrors Go's `Delete`.
+    /// Delete a merchant rule row by primary key.  Mirrors Go's `Delete` method.
     pub async fn delete(&self, id: i64) -> Result<u64> {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
@@ -787,7 +791,7 @@ impl MerchantRuleRepository {
                 .context("MerchantRule DELETE execute")?;
             let rows = stmt.row_count().context("row_count")?;
             if rows == 0 {
-                return Err(anyhow!("MerchantRule DELETE: no row for id={}", id));
+                return Err(anyhow!("MerchantRule DELETE: no row for id={id}"));
             }
             conn.commit().context("MerchantRule DELETE commit")?;
             Ok(rows)
@@ -803,8 +807,8 @@ impl MerchantRuleRepository {
 
     /// Fetch and lock a merchant rule by ID inside a transaction-like flow.
     ///
-    /// Mirrors Go's `FindOneForUpdate(tx, id)` which uses
-    /// `SELECT ... FOR UPDATE WAIT <lockTimeout>`.
+    /// Mirrors Go's `FindOneForUpdate(tx, id)` method which uses
+    /// `SELECT ... FOR UPDATE WAIT <lockTimeout>` syntax.
     ///
     /// Because `rust-oracle` connections are not transactional by default
     /// (auto-commit is off until explicit `conn.commit()`), we use a dedicated
@@ -822,8 +826,7 @@ impl MerchantRuleRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql = format!(
-                "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1 FOR UPDATE WAIT {}",
-                RULE_COLS_FULL, lock_timeout_secs
+                "SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1 FOR UPDATE WAIT {lock_timeout_secs}"
             );
             let mut rows = conn.query(&sql, &[&id]).context("FindOneForUpdate query")?;
 
@@ -832,7 +835,7 @@ impl MerchantRuleRepository {
                 let rule = Self::map_full_row(row)?;
                 return Ok((rule, conn));
             }
-            Err(anyhow!("FindOneForUpdate: no row for id={}", id))
+            Err(anyhow!("FindOneForUpdate: no row for id={id}"))
         });
 
         tokio::time::timeout(timeout, blocking)
@@ -843,11 +846,11 @@ impl MerchantRuleRepository {
 
     /// Dynamic single-row SELECT with optional FOR UPDATE.
     ///
-    /// Mirrors Go's `FindOnlyByEx(ctx, ex, tx, forUpdateWaitOpt)`.
+    /// Mirrors Go's `FindOnlyByEx(ctx, ex, tx, forUpdateWaitOpt)` method.
     ///
     /// `where_clause` is a raw SQL fragment (e.g. `"MERCHANT_CODE = :1 AND IS_DEFAULT = :2"`).
     /// `params` are the bind values in positional order.
-    /// `for_update` controls locking: `None` = no lock, `Some(secs)` = `FOR UPDATE WAIT <secs>`.
+    /// `for_update` controls locking: `None` = no lock, `Some(secs)` = `FOR UPDATE WAIT <secs>` syntax.
     pub async fn find_only_by_expression(
         &self,
         where_clause: &str,
@@ -859,12 +862,12 @@ impl MerchantRuleRepository {
         let wc = where_clause.to_string();
 
         let blocking = tokio::task::spawn_blocking(move || {
+            use std::fmt::Write;
             let conn = pool.get().context("Oracle pool: get connection")?;
 
-            let mut sql =
-                format!("SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE {}", RULE_COLS_FULL, wc);
+            let mut sql = format!("SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE WHERE {wc}");
             if let Some(wait_secs) = for_update {
-                sql.push_str(&format!(" FOR UPDATE WAIT {}", wait_secs));
+                let _ = write!(sql, " FOR UPDATE WAIT {wait_secs}");
             }
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
@@ -887,7 +890,7 @@ impl MerchantRuleRepository {
 
     /// Dynamic multi-row SELECT with optional ordering and pagination.
     ///
-    /// Mirrors Go's `FindList(ctx, ex, optionalParams...)`.
+    /// Mirrors Go's `FindList(ctx, ex, optionalParams...)` method.
     ///
     /// `where_clause` — raw SQL WHERE fragment (e.g. `"IS_DEFAULT = :1"`).
     /// `params`       — positional bind values.
@@ -903,26 +906,24 @@ impl MerchantRuleRepository {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
         let wc = where_clause.to_string();
-        let ob = order_by.map(|s| s.to_string());
+        let ob = order_by.map(ToString::to_string);
 
         let blocking = tokio::task::spawn_blocking(move || {
+            use std::fmt::Write;
             let conn = pool.get().context("Oracle pool: get connection")?;
 
-            let mut sql =
-                format!("SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE {}", RULE_COLS_FULL, wc);
+            let mut sql = format!("SELECT {RULE_COLS_FULL} FROM TCG_UCS.MERCHANT_RULE WHERE {wc}");
             if let Some(ref order) = ob {
-                sql.push_str(&format!(" ORDER BY {}", order));
+                let _ = write!(sql, " ORDER BY {order}");
             }
             if let Some((page, page_size)) = pagination {
+                #[allow(clippy::cast_possible_truncation)]
                 let offset = (page.saturating_sub(1)) * page_size;
-                sql.push_str(&format!(
-                    " OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
-                    offset, page_size
-                ));
+                let _ = write!(sql, " OFFSET {offset} ROWS FETCH NEXT {page_size} ROWS ONLY");
             }
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
-                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+                params.iter().map(|p| p.as_ref() as _).collect();
             let mut stmt = conn
                 .statement(&sql)
                 .prefetch_rows(DEFAULT_PREFETCH_ROWS)
@@ -947,7 +948,7 @@ impl MerchantRuleRepository {
 
     /// Dynamic UPDATE with arbitrary SET and WHERE clauses.
     ///
-    /// Mirrors Go's `UpdateByEx(ctx, record, ex, tx)`.
+    /// Mirrors Go's `UpdateByEx(ctx, record, ex, tx)` method.
     ///
     /// `set_clause`    — raw SQL SET fragment (e.g. `"QUESTIONS = :1, UPDATED_AT = SYSTIMESTAMP"`).
     /// `where_clause`  — raw SQL WHERE fragment (e.g. `"MERCHANT_CODE = :2"`).
@@ -967,8 +968,7 @@ impl MerchantRuleRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
 
             let sql = format!(
-                "UPDATE TCG_UCS.MERCHANT_RULE SET {}, UPDATED_AT = SYSTIMESTAMP WHERE {}",
-                sc, wc
+                "UPDATE TCG_UCS.MERCHANT_RULE SET {sc}, UPDATED_AT = SYSTIMESTAMP WHERE {wc}"
             );
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
@@ -987,9 +987,9 @@ impl MerchantRuleRepository {
             .context("spawn_blocking panicked")?
     }
 
-    /// Update TEMPLATE_FIELDS using an existing connection (transaction).
+    /// Update `TEMPLATE_FIELDS` using an existing connection (transaction).
     ///
-    /// Mirrors Go's `UpdateTemplateFieldsByMerchantCodeTx(tx, merchantCode, templateFields)`.
+    /// Mirrors Go's `UpdateTemplateFieldsByMerchantCodeTx(tx, merchantCode, templateFields)` method.
     ///
     /// The caller must pass in a pooled connection that already holds a
     /// transaction (e.g. from `find_one_for_update`).  This method does NOT
@@ -1005,7 +1005,7 @@ impl MerchantRuleRepository {
             .context("UpdateTemplateFieldsTx execute")?;
         let rows = stmt.row_count().context("row_count")?;
         if rows == 0 {
-            return Err(anyhow!("no merchant rule found for merchantCode: {}", merchant_code));
+            return Err(anyhow!("no merchant rule found for merchantCode: {merchant_code}"));
         }
         Ok(rows)
     }

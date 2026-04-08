@@ -1,7 +1,7 @@
-/// PlayerVerification service.
+/// `PlayerVerification` service.
 ///
 /// Mirrors Go's `internal/service/player_verification.go`.
-/// Contains rate limiting (Redis), WPS/USS/MCS orchestration, and scoring.
+/// Contains rate limiting (`Redis`), `WPS`/`USS`/`MCS` orchestration, and scoring.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -68,14 +68,14 @@ fn is_blocked_field(field_id: &str) -> bool {
 const QUESTION_LIST_REDIS_DB: i32 = 2;
 
 fn ip_key(ip: &str, date: &str) -> String {
-    format!("ucsfe:ql:ip:{}:{}", ip, date)
+    format!("ucsfe:ql:ip:{ip}:{date}")
 }
 
 fn acct_key(merchant: &str, customer: &str, date: &str) -> String {
-    format!("ucsfe:ql:acct:{}@{}:{}", merchant, customer, date)
+    format!("ucsfe:ql:acct:{merchant}@{customer}:{date}")
 }
 
-/// Compute (date_key, end_of_day_unix) from a single clock read.
+/// Compute (`date_key`, `end_of_day_unix`) from a single clock read.
 fn today_and_eod() -> (String, i64) {
     let now = chrono::Local::now();
     let date_key = now.format("%Y%m%d").to_string();
@@ -89,19 +89,20 @@ fn today_and_eod() -> (String, i64) {
 }
 
 /// Atomic INCR + EXPIREAT via Lua (same script as Go version).
-const INCR_WITH_TTL_SCRIPT: &str = r#"
+const INCR_WITH_TTL_SCRIPT: &str = r"
 local v = redis.call('INCR', KEYS[1])
 if v == 1 then
     redis.call('EXPIREAT', KEYS[1], ARGV[1])
 end
 return v
-"#;
+";
 
 static INCR_SCRIPT: once_cell::sync::Lazy<redis::Script> =
     once_cell::sync::Lazy::new(|| redis::Script::new(INCR_WITH_TTL_SCRIPT));
 
-/// Get a cached Redis ConnectionManager for rate limiting (DB 2).
+/// Get a cached `Redis` `ConnectionManager` for rate limiting (DB 2).
 /// Returns a clone of the pre-built manager — O(1), no TCP overhead.
+#[allow(clippy::unused_async)]
 async fn get_rate_limit_redis() -> Result<redis::aio::ConnectionManager, AppError> {
     crate::infra::get_db_manager(QUESTION_LIST_REDIS_DB).map_err(|_| AppError::RedisNotFound)
 }
@@ -119,6 +120,7 @@ pub struct PlayerVerificationService {
 }
 
 impl PlayerVerificationService {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(
         merchant_repo: Arc<MerchantRuleRepository>,
         validation_repo: Arc<ValidationRecordRepository>,
@@ -139,6 +141,7 @@ impl PlayerVerificationService {
 
     // ── GetQuestionList ───────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_lines)]
     pub async fn get_question_list(
         &self,
         merchant_code: &str,
@@ -185,8 +188,8 @@ impl PlayerVerificationService {
             db_result.ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
         // ── Rate-limit check ─────────────────────────────────────────────
-        let ip_limit = merchant_rule.ip_retry_limit as i64;
-        let acct_limit = merchant_rule.account_retry_limit as i64;
+        let ip_limit: i64 = merchant_rule.ip_retry_limit.into();
+        let acct_limit: i64 = merchant_rule.account_retry_limit.into();
 
         tracing::info!(
             merchant_code,
@@ -216,13 +219,13 @@ impl PlayerVerificationService {
 
         // ── Phase 2: Redis INCR + WPS + USS — all three in parallel ─────
         // INCR (82ms) hides completely behind the slower HTTP calls (~176ms).
-        let full_customer_name = format!("{}@{}", merchant_code, customer_name);
+        let full_customer_name = format!("{merchant_code}@{customer_name}");
         let script = &*INCR_SCRIPT;
         let mut incr_c1 = rate_limit_redis.clone();
         let mut incr_c2 = rate_limit_redis.clone();
         let t = Instant::now();
 
-        let (_, wps_result, uss_result) = tokio::join!(
+        let ((), wps_result, uss_result) = tokio::join!(
             // Redis INCR (fire-and-log, never blocks the response)
             async {
                 let mut k1 = script.key(&ip_k);
@@ -293,13 +296,14 @@ impl PlayerVerificationService {
 
     // ── SubmitVerifyMaterials ─────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_lines)]
     pub async fn submit_verify_materials(
         &self,
         merchant_code: &str,
         customer_ip: &str,
         req_body: SubmitVerifyRequest,
     ) -> Result<SubmitVerifyData, AppError> {
-        let customer_name = format!("{}@{}", merchant_code, req_body.customer_name);
+        let customer_name = format!("{merchant_code}@{}", req_body.customer_name);
 
         // ── Phase 1: Fire customer + token + rule_config in parallel ──────
         //
@@ -371,7 +375,7 @@ impl PlayerVerificationService {
         // 5. Parse merchant question configuration
         let questions_map: HashMap<String, Question> = rule_cfg.parse_questions().map_err(|e| {
             tracing::warn!(merchant_code, error = %e, "QUESTIONS CLOB unmarshal failed");
-            AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code))
+            AppError::ParseJsonFailed(format!("merchantCode={merchant_code}"))
         })?;
 
         // 6. Score profile fields (tracking submitted IDs)
@@ -442,7 +446,7 @@ impl PlayerVerificationService {
 
         // 9. Serialise QA map and compute total score
         let qas_bytes = serde_json::to_string(&qa_map)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("marshal qas: {}", e)))?;
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("marshal qas: {e}")))?;
 
         let actual_score: i32 = qa_map.values().map(|qa| qa.score).sum();
         let score_checked = actual_score >= rule_cfg.passing_score;
@@ -461,7 +465,7 @@ impl PlayerVerificationService {
             id: None,
             customer_id: customer.value.customer_id.val,
             customer_name: customer_name.clone(),
-            success: if score_checked { 1 } else { 0 },
+            success: i8::from(score_checked),
             merchant_code: merchant_code.to_string(),
             ip: customer_ip.to_string(),
             passing_score: rule_cfg.passing_score,
@@ -510,13 +514,13 @@ impl PlayerVerificationService {
         let raw = rule.questions_json.as_deref().unwrap_or("");
         if raw.is_empty() {
             tracing::warn!(merchant_code, "questions field is empty");
-            return Err(AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code)));
+            return Err(AppError::ParseJsonFailed(format!("merchantCode={merchant_code}")));
         }
 
         let all: std::collections::HashMap<String, Question> =
             serde_json::from_str(raw).map_err(|e| {
                 tracing::warn!(merchant_code, error = %e, "unmarshal questions failed");
-                AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code))
+                AppError::ParseJsonFailed(format!("merchantCode={merchant_code}"))
             })?;
 
         let dd_map = get_field_config(merchant_code).await;
@@ -561,6 +565,7 @@ impl PlayerVerificationService {
 ///   bind=false (ignore submitted, check actual):
 ///     1. expected == "" || expected == "-1"     → score emptyScore, correct true
 ///     2. otherwise                              → score 0, correct false
+#[allow(clippy::too_many_lines)]
 fn accurate_judgment_score<'a>(
     submitted_field_ids: &mut std::collections::HashSet<&'a str>,
     data_items: &'a [VerifyDataItem],
@@ -670,26 +675,23 @@ fn accurate_judgment_score<'a>(
         }
 
         let expected_value: &str = &expected_value_cow;
-        let question_cfg = match field_id_map_cfg.get(field_id) {
-            Some(q) => q,
-            None => continue,
-        };
+        let Some(question_cfg) = field_id_map_cfg.get(field_id) else { continue };
 
         // Field Id USS Id mapping: translate MCS FieldValue → USS_ID string.
         // Mirrors Go's `GlobalUssMappingConfigs.Load(fieldUssIdCacheKey)`.
         let raw_submitted = &data_item.item.field_value;
-        let submitted: String;
-        if let Some(uss_id) = get_uss_mapping_config_sync(field_id, raw_submitted) {
-            tracing::info!(
-                field_id = %field_id,
-                raw_value = %raw_submitted,
-                uss_id = %uss_id,
-                "field id uss id mapping cache hit"
-            );
-            submitted = uss_id;
-        } else {
-            submitted = raw_submitted.clone();
-        }
+        let submitted: String =
+            if let Some(uss_id) = get_uss_mapping_config_sync(field_id, raw_submitted) {
+                tracing::info!(
+                    field_id = %field_id,
+                    raw_value = %raw_submitted,
+                    uss_id = %uss_id,
+                    "field id uss id mapping cache hit"
+                );
+                uss_id
+            } else {
+                raw_submitted.clone()
+            };
 
         let (score, is_correct);
         if data_item.bind {
@@ -802,10 +804,7 @@ fn calculate_score_for_financial_history(
     ];
 
     for (field_id, raw_score) in score_fields {
-        let q = match field_id_map_cfg.get(*field_id) {
-            Some(q) => q,
-            None => continue,
-        };
+        let Some(q) = field_id_map_cfg.get(*field_id) else { continue };
         if !submitted_field_ids.contains(*field_id) {
             continue;
         }
@@ -861,9 +860,9 @@ fn match_date_with_accuracy(
 ) -> Result<(bool, String)> {
     let dur = parse_accuracy_duration(accuracy)?;
     let submitted = chrono::NaiveDate::parse_from_str(submitted_value, "%Y-%m-%d")
-        .map_err(|e| anyhow::anyhow!("parse submitted date '{}': {}", submitted_value, e))?;
+        .map_err(|e| anyhow::anyhow!("parse submitted date '{submitted_value}': {e}"))?;
     let expected = chrono::NaiveDate::parse_from_str(expected_value, "%Y-%m-%d")
-        .map_err(|e| anyhow::anyhow!("parse expected date '{}': {}", expected_value, e))?;
+        .map_err(|e| anyhow::anyhow!("parse expected date '{expected_value}': {e}"))?;
 
     let lo = submitted - dur;
     let hi = submitted + dur;
@@ -889,30 +888,28 @@ fn match_amount_with_accuracy(
     let pct_str = accuracy.trim_end_matches('%');
     let pct: f64 = pct_str
         .parse()
-        .map_err(|e| anyhow::anyhow!("parse accuracy pct '{}': {}", pct_str, e))?;
+        .map_err(|e| anyhow::anyhow!("parse accuracy pct '{pct_str}': {e}"))?;
     let submitted: f64 = submitted_value
         .parse()
-        .map_err(|e| anyhow::anyhow!("parse submitted amount '{}': {}", submitted_value, e))?;
+        .map_err(|e| anyhow::anyhow!("parse submitted amount '{submitted_value}': {e}"))?;
     let expected: f64 = expected_value
         .parse()
-        .map_err(|e| anyhow::anyhow!("parse expected amount '{}': {}", expected_value, e))?;
+        .map_err(|e| anyhow::anyhow!("parse expected amount '{expected_value}': {e}"))?;
 
     let delta = submitted.abs() * pct / 100.0;
     let lo = submitted - delta;
     let hi = submitted + delta;
     let matched = expected >= lo && expected <= hi;
 
-    let detail = format!(
-        "amountRange=[{:.2} ~ {:.2}], expected={:.2}, inRange={}",
-        lo, hi, expected, matched,
-    );
+    let detail =
+        format!("amountRange=[{lo:.2} ~ {hi:.2}], expected={expected:.2}, inRange={matched}",);
     Ok((matched, detail))
 }
 
 /// Parse a duration string like "3d", "12h", "30m" into a `chrono::Duration`.
 fn parse_accuracy_duration(s: &str) -> Result<chrono::Duration> {
     let s = s.trim();
-    anyhow::ensure!(s.len() >= 2, "accuracy duration too short: '{}'", s);
+    anyhow::ensure!(s.len() >= 2, "accuracy duration too short: '{s}'");
 
     let unit = s.as_bytes()[s.len() - 1];
     let n: i64 = s[..s.len() - 1]

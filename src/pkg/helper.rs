@@ -17,6 +17,7 @@
 /// assert!((round_to(1.2346, 2) - 1.23).abs() < 1e-9);
 /// assert!((round_to(1.2346, 3) - 1.235).abs() < 1e-9);
 /// ```
+#[allow(clippy::cast_possible_wrap)]
 pub fn round_to(val: f64, decimals: u32) -> f64 {
     let factor = 10_f64.powi(decimals as i32);
     (val * factor).round() / factor

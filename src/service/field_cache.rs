@@ -142,8 +142,9 @@ pub struct InitLoadingData {
 impl InitLoadingData {
     /// Starts async initial load. Periodic refresh is handled by `CommonCronJobs`,
     /// matching Go where `startPeriodicLoad` is unused and cron drives refreshes.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn start(repo: Arc<MerchantRuleRepository>) -> Self {
-        let repo_clone = repo.clone();
+        let repo_clone = repo;
         tokio::spawn(async move {
             tracing::info!("Starting async initialisation of field configs...");
 
@@ -157,6 +158,7 @@ impl InitLoadingData {
         Self { _guard: () }
     }
 
+    #[allow(clippy::unused_self)]
     pub fn stop(&self) {
         tracing::info!("Field config loader stopped (refresh handled by cron)");
     }

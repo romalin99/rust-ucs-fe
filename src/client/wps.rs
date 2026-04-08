@@ -121,7 +121,7 @@ impl WpsClient {
         let base_url =
             format!("{}/{}", cfg.host.trim_end_matches('/'), cfg.base_path.trim_end_matches('/'));
 
-        let reset_status_url = format!("{}/members/reset-password-status", base_url);
+        let reset_status_url = format!("{base_url}/members/reset-password-status");
 
         Self {
             inner,
@@ -203,13 +203,13 @@ impl WpsClient {
                         MAX_ATTEMPTS,
                         REQUEST_TIMEOUT
                     );
-                    last_err = anyhow::anyhow!("WPS request timed out after {:?}", REQUEST_TIMEOUT);
+                    last_err = anyhow::anyhow!("WPS request timed out after {REQUEST_TIMEOUT:?}");
                 }
             }
 
             if attempt < MAX_ATTEMPTS {
                 tokio::select! {
-                    _ = sleep(RETRY_DELAY) => {}
+                    () = sleep(RETRY_DELAY) => {}
                     _ = tokio::signal::ctrl_c() => {
                         return Err(anyhow::anyhow!("context cancelled, aborting WPS retries"));
                     }

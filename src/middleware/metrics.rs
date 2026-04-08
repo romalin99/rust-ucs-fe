@@ -10,8 +10,8 @@
 ///   • `http_requests_in_progress`     — Gauge     (method, path)  [defined but NOT used — matches Go]
 ///
 /// Note: Go uses `SummaryVec` for size metrics; the `prometheus` Rust crate has no
-/// Summary type, so `HistogramVec` with wide buckets is the closest equivalent.
-/// PromQL queries differ: Summary uses `{quantile="0.99"}`, Histogram uses
+/// `Summary` type, so `HistogramVec` with wide buckets is the closest equivalent.
+/// `PromQL` queries differ: `Summary` uses `{quantile="0.99"}`, `Histogram` uses
 /// `histogram_quantile(0.99, rate(..._bucket[5m]))`.
 ///
 /// All metrics carry a const label `service = "<service_name>"` matching Go.
@@ -52,7 +52,14 @@ static REQUEST_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
         HistogramOpts::new("http_request_size_bytes", "HTTP request size in bytes")
             .const_label("service", SERVICE_NAME)
             .buckets(vec![
-                64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0
+                64.0,
+                256.0,
+                1_024.0,
+                4_096.0,
+                16_384.0,
+                65_536.0,
+                262_144.0,
+                1_048_576.0
             ]),
         &["method", "path", "status"]
     )
@@ -64,7 +71,14 @@ static RESPONSE_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
         HistogramOpts::new("http_response_size_bytes", "HTTP response size in bytes")
             .const_label("service", SERVICE_NAME)
             .buckets(vec![
-                64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0
+                64.0,
+                256.0,
+                1_024.0,
+                4_096.0,
+                16_384.0,
+                65_536.0,
+                262_144.0,
+                1_048_576.0
             ]),
         &["method", "path", "status"]
     )
@@ -94,8 +108,7 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
     let matched = req
         .extensions()
         .get::<axum::extract::MatchedPath>()
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_else(|| raw_path.clone());
+        .map_or_else(|| raw_path.clone(), |m| m.as_str().to_string());
 
     let start = Instant::now();
     let request_size = req
@@ -111,10 +124,13 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
     let duration = start.elapsed().as_secs_f64();
     // Stack-allocate the 3-digit status string — no heap allocation
     let mut status_buf = [b'0'; 3];
-    let n = status_code as u32;
-    status_buf[0] = b'0' + (n / 100) as u8;
-    status_buf[1] = b'0' + ((n / 10) % 10) as u8;
-    status_buf[2] = b'0' + (n % 10) as u8;
+    let n = u32::from(status_code);
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        status_buf[0] = b'0' + ((n / 100) as u8);
+        status_buf[1] = b'0' + (((n / 10) % 10) as u8);
+        status_buf[2] = b'0' + ((n % 10) as u8);
+    }
     let status = std::str::from_utf8(&status_buf).unwrap_or("000");
     let labels = [method.as_str(), matched.as_str(), status];
 

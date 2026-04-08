@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // ── Dropdown item ─────────────────────────────────────────────────────────────
 
-/// A single dropdown option stored in the TEMPLATE_FIELDS CLOB.
+/// A single dropdown option stored in the `TEMPLATE_FIELDS` CLOB.
 ///
 /// Mirrors Go's:
 /// ```go
@@ -25,10 +25,11 @@ pub struct DropdownItem {
 
 // ── TemplateField ─────────────────────────────────────────────────────────────
 
-/// A template field row in the TEMPLATE_FIELDS CLOB.
+/// A template field row in the `TEMPLATE_FIELDS` CLOB.
 ///
 /// Mirrors Go's full `TemplateField` struct — all JSON tags match exactly so
 /// that round-tripping through the Oracle CLOB (written by Go) is lossless.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TemplateField {
     // ── Identity ──────────────────────────────────────────────────────────────

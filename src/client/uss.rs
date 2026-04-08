@@ -28,7 +28,7 @@ fn i32_from_null_or_int<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<
 
 /// Go's `UnmarshalJSON` pre-sets `UsState = NullInt32{Val: -1}` before unmarshalling,
 /// so when the `"usState"` key is absent, serde needs to use this instead of `NullInt32::default()`.
-fn default_us_state() -> NullInt32 {
+const fn default_us_state() -> NullInt32 {
     NullInt32 {
         val: -1,
         valid: false,
@@ -81,13 +81,10 @@ pub fn is_http_error(err: &anyhow::Error) -> bool {
 /// Returns `true` when the USS error body contains
 /// `"uss-ae.profile.data_not_found"` or `"profile.data_not_found"`.
 pub fn is_profile_not_found(err: &anyhow::Error) -> bool {
-    match err.downcast_ref::<UssHttpError>() {
-        Some(e) => {
-            e.body.contains("uss-ae.profile.data_not_found")
-                || e.body.contains("profile.data_not_found")
-        }
-        None => false,
-    }
+    err.downcast_ref::<UssHttpError>().is_some_and(|e| {
+        e.body.contains("uss-ae.profile.data_not_found")
+            || e.body.contains("profile.data_not_found")
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,12 +122,12 @@ impl<'de> Deserialize<'de> for FlexTime {
         // Accept null or string
         let opt = Option::<String>::deserialize(d)?;
         match opt {
-            None => Ok(FlexTime(None)),
-            Some(s) if s.is_empty() || s.eq_ignore_ascii_case("null") => Ok(FlexTime(None)),
+            None => Ok(Self(None)),
+            Some(s) if s.is_empty() || s.eq_ignore_ascii_case("null") => Ok(Self(None)),
             Some(s) => {
                 let dt = chrono::NaiveDateTime::parse_from_str(&s, FLEX_TIME_FMT)
                     .map_err(de::Error::custom)?;
-                Ok(FlexTime(Some(dt)))
+                Ok(Self(Some(dt)))
             }
         }
     }
@@ -248,16 +245,20 @@ impl serde::Serialize for NullInt32 {
 
 impl<'de> Deserialize<'de> for NullInt32 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        match Option::<i32>::deserialize(d)? {
-            None => Ok(NullInt32 {
-                val: -1,
-                valid: false,
-            }),
-            Some(v) => Ok(NullInt32 {
-                val: v,
-                valid: true,
-            }),
-        }
+        Option::<i32>::deserialize(d)?.map_or_else(
+            || {
+                Ok(Self {
+                    val: -1,
+                    valid: false,
+                })
+            },
+            |v| {
+                Ok(Self {
+                    val: v,
+                    valid: true,
+                })
+            },
+        )
     }
 }
 
@@ -278,16 +279,20 @@ impl serde::Serialize for NullBool {
 
 impl<'de> Deserialize<'de> for NullBool {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        match Option::<bool>::deserialize(d)? {
-            None => Ok(NullBool {
-                val: false,
-                valid: false,
-            }),
-            Some(v) => Ok(NullBool {
-                val: v,
-                valid: true,
-            }),
-        }
+        Option::<bool>::deserialize(d)?.map_or_else(
+            || {
+                Ok(Self {
+                    val: false,
+                    valid: false,
+                })
+            },
+            |v| {
+                Ok(Self {
+                    val: v,
+                    valid: true,
+                })
+            },
+        )
     }
 }
 
@@ -300,13 +305,15 @@ pub struct NullInt {
 
 impl<'de> Deserialize<'de> for NullInt {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        match Option::<i64>::deserialize(d)? {
-            None => Ok(NullInt::default()),
-            Some(v) => Ok(NullInt {
-                val: v,
-                valid: true,
-            }),
-        }
+        Option::<i64>::deserialize(d)?.map_or_else(
+            || Ok(Self::default()),
+            |v| {
+                Ok(Self {
+                    val: v,
+                    valid: true,
+                })
+            },
+        )
     }
 }
 
@@ -419,6 +426,7 @@ pub struct Profile {
     #[serde(rename = "version", deserialize_with = "i32_from_null_or_int", default)]
     pub version: i32,
     #[serde(rename = "type", default)]
+    #[allow(clippy::struct_field_names)]
     pub profile_type: NullInt32,
     #[serde(rename = "createSuboFlag", default)]
     pub create_subo_flag: NullInt32,
@@ -441,6 +449,7 @@ pub struct Profile {
 }
 
 /// Merchant info embedded inside `CustomerValue`.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Merchant {
     #[serde(rename = "merchantDesc", default)]
@@ -472,6 +481,7 @@ pub struct Merchant {
 /// Go has a custom `UnmarshalJSON` that pre-sets `UsState = NullInt32{Val: -1, Valid: false}`
 /// before unmarshalling, so even when the entire object is `null` or when `usState` is `null`,
 /// `UsState.Val` is `-1` (not `0`). The custom `Default` here mirrors that behaviour.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomerAdditionalInfo {
     // ── Timestamps ────────────────────────────────────────────────────────────
@@ -551,6 +561,7 @@ impl Default for CustomerAdditionalInfo {
 }
 
 /// Mirrors Go's `Value` (inner payload of `CustomerInfo`) — aligned to actual USS JSON response.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CustomerValue {
     // ── String / identity fields ──────────────────────────────────────────────
@@ -788,7 +799,7 @@ impl UssClient {
             if p.is_empty() { String::new() } else { format!("{p}/") }
         };
 
-        let reset_generate_url = format!("{}/{}password/reset-generate", base_url, base_path);
+        let reset_generate_url = format!("{base_url}/{base_path}password/reset-generate");
 
         Self {
             inner,
@@ -818,27 +829,23 @@ impl UssClient {
                         max = MAX_RETRIES,
                         error = %e,
                         retry_in_ms = RETRY_DELAY.as_millis(),
-                        "[USSClient] attempt {}/{} failed, retrying...",
-                        attempt, MAX_RETRIES
+                        "[USSClient] attempt {attempt}/{MAX_RETRIES} failed, retrying..."
                     );
                     last_err = e;
                 }
                 Err(_timeout) => {
                     tracing::warn!(
                         attempt,
-                        "[USSClient] attempt {}/{} timed out after {:?}",
-                        attempt,
-                        MAX_RETRIES,
-                        SINGLE_REQ_TIMEOUT
+                        "[USSClient] attempt {attempt}/{MAX_RETRIES} timed out after {SINGLE_REQ_TIMEOUT:?}"
                     );
                     last_err =
-                        anyhow::anyhow!("USS request timed out after {:?}", SINGLE_REQ_TIMEOUT);
+                        anyhow::anyhow!("USS request timed out after {SINGLE_REQ_TIMEOUT:?}");
                 }
             }
 
             if attempt < MAX_RETRIES {
                 tokio::select! {
-                    _ = sleep(RETRY_DELAY) => {}
+                    () = sleep(RETRY_DELAY) => {}
                     _ = tokio::signal::ctrl_c() => {
                         return Err(anyhow::anyhow!("context cancelled, aborting retries"));
                     }
@@ -850,6 +857,7 @@ impl UssClient {
     }
 
     /// Mirrors Go's `doGet`: send GET, check status == 200, read ≤100 KB body.
+    #[allow(clippy::future_not_send)]
     async fn do_get(&self, url: &str) -> Result<bytes::Bytes> {
         let resp = self
             .inner

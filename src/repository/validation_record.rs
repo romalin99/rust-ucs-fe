@@ -1,4 +1,4 @@
-/// Oracle repository for TCG_UCS.VALIDATION_RECORD.
+/// Oracle repository for `TCG_UCS.VALIDATION_RECORD`.
 ///
 /// Uses the `oracle` crate for direct Oracle Database access via an `r2d2`
 /// connection pool.  All Oracle calls are wrapped in `tokio::task::spawn_blocking`
@@ -59,6 +59,7 @@ pub struct ValidationRecordRepository {
 }
 
 impl ValidationRecordRepository {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64, write_timeout_secs: u64) -> Self {
         Self {
             pool,
@@ -130,7 +131,7 @@ impl ValidationRecordRepository {
                                    src.P_MERCHANT_CODE, src.P_IP,              src.P_PASSING_SCORE, \
                                    src.P_SCORE,         src.P_QAS,             SYSTIMESTAMP)";
 
-            let success = record.success as i32;
+            let success = i32::from(record.success);
             conn.execute(
                 sql,
                 &[
@@ -154,7 +155,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("upsert timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("upsert timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in upsert")?
     }
 
@@ -167,7 +168,7 @@ impl ValidationRecordRepository {
 
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
-            let success = record.success as i32;
+            let success = i32::from(record.success);
 
             let sql = "INSERT INTO TCG_UCS.VALIDATION_RECORD \
                         (CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, IP, \
@@ -195,7 +196,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("insert timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("insert timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in insert")?
     }
 
@@ -234,6 +235,7 @@ impl ValidationRecordRepository {
                     id: row.get::<_, Option<i64>>(0).unwrap_or_default(),
                     customer_id: row.get::<_, i64>(1).context("CUSTOMER_ID")?,
                     customer_name: row.get::<_, String>(2).context("CUSTOMER_NAME")?,
+                    #[allow(clippy::cast_possible_truncation)]
                     success: row.get::<_, i32>(3).unwrap_or(0) as i8,
                     merchant_code: row.get::<_, String>(4).context("MERCHANT_CODE")?,
                     ip: row.get::<_, String>(5).context("IP")?,
@@ -249,12 +251,13 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("find_latest timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("find_latest timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in find_latest")?
     }
 
     // ── Read — list queries ───────────────────────────────────────────────────
 
+    #[allow(clippy::needless_pass_by_value)]
     fn map_row(row: oracle::Row) -> Result<ValidationRecord> {
         let created_at: NaiveDateTime = row
             .get::<_, Option<NaiveDateTime>>(9)
@@ -264,6 +267,7 @@ impl ValidationRecordRepository {
             id: row.get::<_, Option<i64>>(0).unwrap_or_default(),
             customer_id: row.get::<_, i64>(1).context("CUSTOMER_ID")?,
             customer_name: row.get::<_, String>(2).context("CUSTOMER_NAME")?,
+            #[allow(clippy::cast_possible_truncation)]
             success: row.get::<_, i32>(3).unwrap_or(0) as i8,
             merchant_code: row.get::<_, String>(4).context("MERCHANT_CODE")?,
             ip: row.get::<_, String>(5).context("IP")?,
@@ -463,11 +467,11 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("count_fail_since timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("count_fail_since timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in count_fail_since")?
     }
 
-    /// Aggregated statistics (total / fail / success / last_created) for a
+    /// Aggregated statistics (total / fail / success / `last_created`) for a
     /// customer+merchant pair.
     ///
     /// Mirrors Go's `GetSummaryByCustomerAndMerchant`.
@@ -513,7 +517,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("get_summary timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("get_summary timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in get_summary")?
     }
 
@@ -566,7 +570,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("get_ip_stats timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("get_ip_stats timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in get_ip_stats")?
     }
 
@@ -639,7 +643,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("get_count_by_minute timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("get_count_by_minute timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in get_count_by_minute")?
     }
 
@@ -676,7 +680,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("get_count_by_time_range timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("get_count_by_time_range timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in get_count_by_time_range")?
     }
 
@@ -725,7 +729,7 @@ impl ValidationRecordRepository {
 
         tokio::time::timeout(timeout, blocking)
             .await
-            .map_err(|_| anyhow!("stream_by_time_range timed out after {:?}", timeout))?
+            .map_err(|_| anyhow!("stream_by_time_range timed out after {timeout:?}"))?
             .context("spawn_blocking panicked in stream_by_time_range")?
     }
     /// Dynamic multi-row SELECT with optional ordering and pagination.
@@ -746,30 +750,28 @@ impl ValidationRecordRepository {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
         let wc = where_clause.to_string();
-        let ob = order_by.map(|s| s.to_string());
+        let ob = order_by.map(ToString::to_string);
 
         let blocking = tokio::task::spawn_blocking(move || {
+            use std::fmt::Write;
             let conn = pool.get().context("Oracle pool: get connection")?;
 
             let mut sql = format!(
                 "SELECT ID, CUSTOMER_ID, CUSTOMER_NAME, SUCCESS, MERCHANT_CODE, \
                         IP, PASSING_SCORE, SCORE, QAS, CREATED_AT \
-                 FROM TCG_UCS.VALIDATION_RECORD WHERE {}",
-                wc
+                 FROM TCG_UCS.VALIDATION_RECORD WHERE {wc}"
             );
             if let Some(ref order) = ob {
-                sql.push_str(&format!(" ORDER BY {}", order));
+                let _ = write!(sql, " ORDER BY {order}");
             }
             if let Some((page, page_size)) = pagination {
+                #[allow(clippy::cast_possible_truncation)]
                 let offset = (page.saturating_sub(1)) * page_size;
-                sql.push_str(&format!(
-                    " OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
-                    offset, page_size
-                ));
+                let _ = write!(sql, " OFFSET {offset} ROWS FETCH NEXT {page_size} ROWS ONLY");
             }
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
-                params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
+                params.iter().map(|p| p.as_ref() as _).collect();
             let mut stmt = conn
                 .statement(&sql)
                 .prefetch_rows(super::DEFAULT_PREFETCH_ROWS)

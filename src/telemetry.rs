@@ -50,7 +50,7 @@ static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 
 /// Returns the service name injected by `init_tracing`, or `"ucs-fe"`.
 pub fn service_name() -> &'static str {
-    SERVICE_NAME.get().map(String::as_str).unwrap_or("ucs-fe")
+    SERVICE_NAME.get().map_or("ucs-fe", String::as_str)
 }
 
 // ── Buffered stdout writer ────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ struct BufferedStdout(Arc<Mutex<BufWriter<io::Stdout>>>);
 /// RAII guard returned by `BufferedStdout::make_writer`.
 struct BufGuard<'a>(std::sync::MutexGuard<'a, BufWriter<io::Stdout>>);
 
-impl<'a> io::Write for BufGuard<'a> {
+impl io::Write for BufGuard<'_> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
@@ -85,7 +85,7 @@ impl<'a> MakeWriter<'a> for BufferedStdout {
     type Writer = BufGuard<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        BufGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        BufGuard(self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }
 
@@ -102,7 +102,7 @@ fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
 
     LOG_BUF.set(inner.clone()).ok();
 
-    let flush_ms = cfg.buffer_flush_interval.max(1) as u64;
+    let flush_ms = u64::from(cfg.buffer_flush_interval.max(1));
     let flush_interval = std::time::Duration::from_millis(flush_ms);
     let writer = inner.clone();
     std::thread::Builder::new()
@@ -171,7 +171,7 @@ struct BehaviorFileWriter(Arc<Mutex<BufWriter<std::fs::File>>>);
 
 struct BehaviorBufGuard<'a>(std::sync::MutexGuard<'a, BufWriter<std::fs::File>>);
 
-impl<'a> io::Write for BehaviorBufGuard<'a> {
+impl io::Write for BehaviorBufGuard<'_> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
@@ -186,7 +186,7 @@ impl<'a> MakeWriter<'a> for BehaviorFileWriter {
     type Writer = BehaviorBufGuard<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        BehaviorBufGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        BehaviorBufGuard(self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }
 
@@ -208,18 +208,18 @@ fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
     };
 
     if let Err(e) = std::fs::create_dir_all(&behavior_dir) {
-        eprintln!("Failed to create behavior log directory {}: {}", behavior_dir, e);
+        eprintln!("Failed to create behavior log directory {behavior_dir}: {e}");
         return None;
     }
 
     let behavior_file_path = format!("{}/{}-behavior.log", behavior_dir, cfg.name);
-    eprintln!("Log behavior file path: {}", behavior_file_path);
+    eprintln!("Log behavior file path: {behavior_file_path}");
 
     let file = match std::fs::OpenOptions::new().create(true).append(true).open(&behavior_file_path)
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to open behavior log file {}: {}", behavior_file_path, e);
+            eprintln!("Failed to open behavior log file {behavior_file_path}: {e}");
             return None;
         }
     };
@@ -421,11 +421,11 @@ where
         let message = collector
             .0
             .remove("message")
-            .and_then(|v| v.as_str().map(|s| s.to_owned()))
+            .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
 
         // Only the base filename (mirrors Go's `path.Base(ent.Caller.File)`).
-        let file = meta.file().map(|f| f.rsplit('/').next().unwrap_or(f)).unwrap_or("<unknown>");
+        let file = meta.file().map_or("<unknown>", |f| f.rsplit('/').next().unwrap_or(f));
         let line = meta.line().unwrap_or(0);
 
         // Timestamp in Go's default layout `2006-01-02 15:04:05.000`.
@@ -455,7 +455,7 @@ where
             for (k, v) in &collector.0 {
                 write!(writer, "{}", if first { " " } else { ", " })?;
                 first = false;
-                write!(writer, "{}={}", k, v)?;
+                write!(writer, "{k}={v}")?;
             }
         }
 

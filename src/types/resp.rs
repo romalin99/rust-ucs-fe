@@ -20,6 +20,7 @@ pub struct SuccessResp {
 }
 
 impl SuccessResp {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn ok() -> Self {
         Self { success: true }
     }
@@ -74,12 +75,14 @@ pub struct BaseResponseT<T: Serialize> {
 }
 
 impl<T: Serialize> BaseResponseT<T> {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn ok(value: T) -> Self {
         Self {
             success: true,
             value: Some(value),
         }
     }
+    #[allow(clippy::missing_const_for_fn)]
     pub fn fail() -> Self {
         Self {
             success: false,

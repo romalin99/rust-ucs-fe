@@ -80,7 +80,7 @@ pub async fn error_handler(req: Request<Body>, next: Next) -> Response<Body> {
 /// Map common HTTP status codes to `(errorCode, message)` pairs.
 ///
 /// Mirrors Go's `ErrorHandler` switch cases.
-fn map_status(status: StatusCode) -> (&'static str, &'static str) {
+const fn map_status(status: StatusCode) -> (&'static str, &'static str) {
     match status {
         StatusCode::BAD_REQUEST => ("ucs-fe.non.bad_request", "bad request"),
         StatusCode::UNAUTHORIZED => ("ucs-fe.non.unauthorized", "unauthorized"),

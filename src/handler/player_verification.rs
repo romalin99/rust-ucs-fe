@@ -1,15 +1,15 @@
 /// HTTP handlers for player verification.
 ///
-/// Full port of Go's `internal/handler/player_verification.go`.
+/// Full port of `Go`'s `internal/handler/player_verification.go`.
 ///
 /// Routes:
-///   GET  /tcg-ucs-fe/verification/questions   → get_question_list
-///   POST /tcg-ucs-fe/verification/materials    → submit_verify_materials
+///   GET  /tcg-ucs-fe/verification/questions   → `get_question_list`
+///   POST /tcg-ucs-fe/verification/materials    → `submit_verify_materials`
 ///
-/// Error convention (mirrors Go exactly):
+/// Error convention (mirrors `Go` exactly):
 ///   - Parameter validation errors → 400
-///   - ALL business / service errors → **500** (Go uses `fiber.StatusInternalServerError`)
-///   - PhoneAlreadyBound / EmailAlreadyBound → 200 (business-normal, not errors)
+///   - ALL business / service errors → **500** (`Go` uses `fiber.StatusInternalServerError`)
+///   - `PhoneAlreadyBound` / `EmailAlreadyBound` → 200 (business-normal, not errors)
 ///   - errorCode prefix: `ucsfe.questions.*` / `ucsfe.materials.*`
 use axum::{
     extract::{Query, State, rejection::JsonRejection},
@@ -27,9 +27,10 @@ use crate::types::resp::ErrResponse;
 
 // ── GET /tcg-ucs-fe/verification/questions ────────────────────────────────────
 
-/// Mirrors Go's `PlayerVerification.GetQuestionList`.
+/// Mirrors `Go`'s `PlayerVerification.GetQuestionList`.
 ///
-/// All service-level errors return **500 Internal Server Error** (matching Go).
+/// All service-level errors return **500 Internal Server Error** (matching `Go`).
+#[allow(clippy::too_many_lines)]
 pub async fn get_question_list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -206,9 +207,9 @@ pub async fn get_question_list(
 
 // ── POST /tcg-ucs-fe/verification/materials ───────────────────────────────────
 
-/// Mirrors Go's `PlayerVerification.SubmitVerifyMaterials`.
+/// Mirrors `Go`'s `PlayerVerification.SubmitVerifyMaterials`.
 ///
-/// All service-level errors return **500 Internal Server Error** (matching Go).
+/// All service-level errors return **500 Internal Server Error** (matching `Go`).
 pub async fn submit_verify_materials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -266,12 +267,13 @@ pub async fn submit_verify_materials(
             )
         }
 
-        Err(AppError::CustomerFetchFailed(_))
-        | Err(AppError::CustomerPersonalInfoFetchFailed(_)) => err_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "ucsfe.materials.customer_not_exists",
-            "Internal server error",
-        ),
+        Err(AppError::CustomerFetchFailed(_) | AppError::CustomerPersonalInfoFetchFailed(_)) => {
+            err_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ucsfe.materials.customer_not_exists",
+                "Internal server error",
+            )
+        }
 
         Err(AppError::PasswordResetFailed(_)) => err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -280,11 +282,11 @@ pub async fn submit_verify_materials(
         ),
 
         Err(AppError::VerifyPlayerInfoFailed(ref e)) => {
-            tracing::error!("MCS verification failed: merchant={} err={}", merchant_code, e);
+            tracing::error!("`MCS` verification failed: merchant={} err={}", merchant_code, e);
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ucsfe.materials.mcs_verify_failed",
-                "MCS verification failed",
+                "`MCS` verification failed",
             )
         }
 
@@ -298,10 +300,10 @@ pub async fn submit_verify_materials(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn extract_header<'a>(headers: &'a HeaderMap, name: &str) -> Cow<'a, str> {
-    match headers.get(name).and_then(|v| v.to_str().ok()) {
-        Some(val) => Cow::Borrowed(val),
-        None => Cow::Borrowed(""),
-    }
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map_or(Cow::Borrowed(""), Cow::Borrowed)
 }
 
 /// Build a typed error response.

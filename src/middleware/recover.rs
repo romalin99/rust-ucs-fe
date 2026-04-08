@@ -72,13 +72,11 @@ where
             match result {
                 Ok(response) => response,
                 Err(payload) => {
-                    let msg: String = if let Some(s) = payload.downcast_ref::<String>() {
-                        s.clone()
-                    } else if let Some(s) = payload.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else {
-                        "unknown panic".to_string()
-                    };
+                    let msg: String = payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| payload.downcast_ref::<&str>().map(ToString::to_string))
+                        .unwrap_or_else(|| "unknown panic".to_string());
 
                     // Log with method + path, mirroring Go:
                     //   logs.Err(c, "[PANIC] %s %s => %v", c.Method(), c.Path(), r)

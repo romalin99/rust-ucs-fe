@@ -10,7 +10,7 @@
 ///   - Skips paths in `SKIP_PATHS` (mirrors Go's `OtelConfig.SkipPaths`).
 ///
 /// When `opentelemetry` is added to `Cargo.toml` in the future the span
-/// created here can be promoted to a full OTel span by calling
+/// created here can be promoted to a full `OTel` span by calling
 /// `span.set_parent(...)` via `tracing_opentelemetry`.
 use axum::{body::Body, http::Request, middleware::Next, response::Response};
 use tracing::Instrument;

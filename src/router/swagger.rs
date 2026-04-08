@@ -8,7 +8,7 @@
 ///   - Helper functions to resolve the host IP (mirrors Go's `getLocalIP` /
 ///     `getOutboundIP`).
 ///
-/// When a proper Rust OpenAPI / Swagger crate (e.g. `utoipa`) is added later,
+/// When a proper Rust `OpenAPI` / Swagger crate (e.g. `utoipa`) is added later,
 /// this module should be updated to mount the full UI.
 use axum::{Json, Router, routing::get};
 use serde_json::json;
@@ -21,7 +21,7 @@ use std::net::UdpSocket;
 /// Mirrors Go's `router.Init(fiberApp, &cfg)`.
 pub fn register(router: Router, port: u16) -> Router {
     let host = resolve_host();
-    let base = format!("{}:{}", host, port);
+    let base = format!("{host}:{port}");
 
     router.route(
         "/swagger/info",

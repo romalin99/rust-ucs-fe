@@ -132,7 +132,7 @@ pub fn fatal(msg: &str) -> ! {
 /// Formatted ERROR log then `process::exit(1)`.
 ///
 /// Mirrors Go's `logs.Fatalf(ctx, format, args...)`.
-pub fn fatalf(msg: String) -> ! {
+pub fn fatalf(msg: &str) -> ! {
     tracing::error!(fatal = true, "{}", msg);
     crate::telemetry::flush_log_buf();
     std::process::exit(1);
@@ -158,7 +158,7 @@ pub fn panic_log(msg: &str) -> ! {
 
 /// INFO log with optional context fields.
 ///
-/// Mirrors Go's `logs.Info(ctx, msg, ...)` where ctx carries user_id / trace_id.
+/// Mirrors Go's `logs.Info(ctx, msg, ...)` where `ctx` carries `user_id` / `trace_id`.
 pub fn info_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
     match (user_id, trace_id) {
         (Some(uid), Some(tid)) => tracing::info!(user_id = uid, trace_id = tid, "{}", msg),
@@ -199,14 +199,14 @@ pub fn error_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
 /// Mirrors Go's `logs.Any(key, data any) zap.Field`.
 /// In idiomatic Rust, prefer `tracing::info!(key = %value, "msg")` directly.
 pub fn any_field(key: &str, value: impl std::fmt::Display) -> String {
-    format!("{}={}", key, value)
+    format!("{key}={value}")
 }
 
 /// Create a `flag=<value>` log field string.
 ///
 /// Mirrors Go's `logs.Flag(flag string) zap.Field`.
 pub fn flag(value: &str) -> String {
-    format!("flag={}", value)
+    format!("flag={value}")
 }
 
 // ── Behavior logger ───────────────────────────────────────────────────────────

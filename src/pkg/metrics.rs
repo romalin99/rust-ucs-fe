@@ -66,8 +66,8 @@ impl OraclePoolMetrics {
 /// Prometheus gauges/counters for Redis connection pool statistics.
 ///
 /// Mirrors Go's `pkg/metrics/redis_metrics.go`.
-/// Gauge for current values (pool_size, total_conns, idle_conns, wait_duration_ns).
-/// Counter for cumulative monotonic values (hits, misses, timeouts, wait_count, stale_conns).
+/// Gauge for current values (`pool_size`, `total_conns`, `idle_conns`, `wait_duration_ns`).
+/// Counter for cumulative monotonic values (`hits`, `misses`, `timeouts`, `wait_count`, `stale_conns`).
 pub struct RedisPoolMetrics {
     pub max_pool_size: GaugeVec,
     pub hits: CounterVec,
@@ -116,6 +116,7 @@ impl RedisPoolMetrics {
 /// Prometheus counters/gauges for Kafka offset-commit monitoring.
 ///
 /// Mirrors Go's `pkg/metrics/kafka_metrics.go`.
+#[allow(clippy::struct_field_names)]
 pub struct KafkaMetrics {
     /// Total successful Kafka offset commits.
     pub commit_success_total: CounterVec,
@@ -229,6 +230,7 @@ impl MetricsServer {
     /// Create a metrics server bound to the given address.
     ///
     /// Mirrors Go's `NewMetricsServer(addr string, logger *zap.Logger)`.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(addr: SocketAddr) -> Self {
         Self { addr }
     }

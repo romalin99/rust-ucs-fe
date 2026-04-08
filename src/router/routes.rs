@@ -7,7 +7,7 @@
 ///   GET  /readyz      → "ok"
 ///   GET  /healthv2    → "ok"
 ///   GET  /monitor     → JSON status
-///   GET  /metrics     → Prometheus OpenMetrics
+///   GET  /metrics     → `Prometheus OpenMetrics`
 ///
 /// API routes under `/tcg-ucs-fe` (global 800 rps):
 ///   GET  /ping
@@ -77,6 +77,7 @@ impl KeyExtractor for PathKeyExtractor {
 /// Build the full Axum router.
 ///
 /// Mirrors Go's `RegisterHandlers(fiberApp, playerVerification, cfg)`.
+#[allow(clippy::too_many_lines)]
 pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
     let port = state.config.port;
 

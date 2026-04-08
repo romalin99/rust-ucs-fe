@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Full DB row for TCG_UCS.MERCHANT_RULE.
+/// Full DB row for `TCG_UCS.MERCHANT_RULE`.
 #[derive(Debug, Clone)]
 pub struct MerchantRule {
     pub id: i64,
@@ -92,6 +92,7 @@ pub struct Question {
 }
 
 /// Public shape returned to the frontend.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionInfo {
     #[serde(rename = "fieldId")]
@@ -102,13 +103,13 @@ pub struct QuestionInfo {
     pub field_attribute: String,
     #[serde(rename = "fieldType")]
     pub field_type: String,
-    #[serde(rename = "fieldDropdownList", skip_serializing_if = "is_dropdown_empty")]
+    #[serde(rename = "fieldDropdownList", skip_serializing_if = "Option::is_none")]
     pub field_dropdown_list: Option<Vec<crate::model::template::DropdownItem>>,
 }
 
 /// Mirrors Go's `omitempty` for slices: skip when None OR empty.
-fn is_dropdown_empty(v: &Option<Vec<crate::model::template::DropdownItem>>) -> bool {
-    v.as_ref().is_none_or(|list| list.is_empty())
+fn is_dropdown_empty(v: Option<&Vec<crate::model::template::DropdownItem>>) -> bool {
+    v.is_none_or(Vec::is_empty)
 }
 
 /// Single translation entry for a field ID.
@@ -185,6 +186,7 @@ impl MerchantRule {
 
     /// Returns fieldId → fieldTranslation map for the requested language.
     /// Falls back to "EN" if language not found. Returns empty map on error.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn get_translations_by_language(&self, language: &str) -> HashMap<String, String> {
         let start = std::time::Instant::now();
         let raw = self.field_translations.as_deref().unwrap_or("");
@@ -212,21 +214,19 @@ impl MerchantRule {
         };
 
         // Pick the requested language, fall back to "EN".
-        let (list, fallback) = match all.get(language) {
-            Some(v) => (v, ""),
-            None => match all.get("EN") {
-                Some(v) => (v, " (fallback to EN)"),
-                None => {
-                    tracing::info!(
-                        language,
-                        fallback = " (no EN fallback)",
-                        fields = 0,
-                        elapsed_ms = start.elapsed().as_millis() as u64,
-                        "GetTranslationsByLanguage"
-                    );
-                    return HashMap::new();
-                }
-            },
+        let (list, fallback) = if let Some(v) = all.get(language) {
+            (v, "")
+        } else if let Some(v) = all.get("EN") {
+            (v, " (fallback to EN)")
+        } else {
+            tracing::info!(
+                language,
+                fallback = " (no EN fallback)",
+                fields = 0,
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "GetTranslationsByLanguage"
+            );
+            return HashMap::new();
         };
 
         let result: HashMap<String, String> =

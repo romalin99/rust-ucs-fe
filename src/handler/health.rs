@@ -1,20 +1,20 @@
 /// Miscellaneous HTTP handlers.
 ///
-/// Full port of Go's `internal/handler/handler.go`.
+/// Full port of `Go`'s `internal/handler/handler.go`.
 ///
 /// Routes:
 ///   GET  /tcg-ucs-fe/ping              → ping          ({"Pong":"success"})
 ///   GET  /tcg-ucs-fe/pong              → pong          ("pong" text)
 ///   GET  /tcg-ucs-fe/hello             → hello         ({"message":"Hello {name}"})
 ///   GET  /tcg-ucs-fe/health            → health        (200 no CORS headers)
-///   GET  /tcg-ucs-fe/healthz           → health_check  ({"status":"ok","time":"..."})
+///   GET  /tcg-ucs-fe/healthz           → `health_check`  ({"status":"ok","time":"..."})
 ///   GET  /tcg-ucs-fe/monitor           → monitor       ({"status":"ok","version":"..."})
 ///   GET  /tcg-ucs-fe/test/quick        → quick         (6 s, cancellation-aware)
 ///   GET  /tcg-ucs-fe/test/normal       → normal        (5 s)
 ///   GET  /tcg-ucs-fe/test/long         → long          (15 s)
-///   GET  /tcg-ucs-fe/test/timeout      → timeout_handler (50 s)
+///   GET  /tcg-ucs-fe/test/timeout      → `timeout_handler` (50 s)
 ///   POST /tcg-ucs-fe/upload            → upload        (multipart, ≤50 MB)
-///   POST /tcg-ucs-fe/upload/v2         → upload_v2     (allowlist extensions)
+///   POST /tcg-ucs-fe/upload/v2         → `upload_v2`     (allowlist extensions)
 use std::path::Path;
 use std::time::Duration;
 
@@ -46,9 +46,9 @@ fn default_name() -> String {
 
 /// GET /tcg-ucs-fe/ping
 ///
-/// Mirrors Go's `PingHandler`:
+/// Mirrors `Go`'s `PingHandler`:
 /// ```go
-/// return c.JSON(fiber.Map{"Pong": "success"})
+/// return c.JSON(`fiber`.Map{"Pong": "success"})
 /// ```
 pub async fn ping() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "Pong": "success" }))
@@ -67,10 +67,10 @@ pub async fn pong() -> &'static str {
 
 /// GET /tcg-ucs-fe/hello?name=...
 ///
-/// Mirrors Go's `HelloHandler`:
+/// Mirrors `Go`'s `HelloHandler`:
 /// ```go
 /// name := c.Query("name", "World")
-/// return c.JSON(fiber.Map{"message": "Hello " + name})
+/// return c.JSON(`fiber`.Map{"message": "Hello " + name})
 /// ```
 pub async fn hello(Query(q): Query<HelloQuery>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "message": format!("Hello {}", q.name) }))
@@ -80,9 +80,9 @@ pub async fn hello(Query(q): Query<HelloQuery>) -> Json<serde_json::Value> {
 
 /// GET /tcg-ucs-fe/health
 ///
-/// Mirrors Go's `HealthHandler`: returns 200 with no CORS headers and no body.
-/// Used by load-balancer probes that reject CORS headers.
-/// Go explicitly strips 8 CORS headers to prevent CorsLayer leakage.
+/// Mirrors `Go`'s `HealthHandler`: returns 200 with no `CORS` headers and no body.
+/// Used by load-balancer probes that reject `CORS` headers.
+/// `Go` explicitly strips 8 `CORS` headers to prevent `CorsLayer` leakage.
 pub async fn health() -> Response {
     let mut resp = (
         StatusCode::OK,
@@ -139,7 +139,7 @@ pub async fn monitor() -> Json<serde_json::Value> {
 pub async fn timeout_handler() -> Response {
     // Using tokio::select! so the outer TimeoutLayer can cancel us.
     tokio::select! {
-        _ = time::sleep(Duration::from_secs(50)) => {
+        () = time::sleep(Duration::from_secs(50)) => {
             Json(serde_json::json!({ "Pong": "success" })).into_response()
         }
     }
@@ -186,10 +186,10 @@ pub async fn quick() -> Response {
 
 /// GET /tcg-ucs-fe/test/normal
 ///
-/// Mirrors Go's `NormalHandler`: waits 5 s. Returns 408 on cancellation.
+/// Mirrors `Go`'s `NormalHandler`: waits 5 s. Returns 408 on cancellation.
 pub async fn normal() -> Response {
     tokio::select! {
-        _ = time::sleep(Duration::from_secs(5)) => {
+        () = time::sleep(Duration::from_secs(5)) => {
             info!("Normal handler processed");
             Json(serde_json::json!({
                 "code":    200,
@@ -213,10 +213,10 @@ pub async fn normal() -> Response {
 
 /// GET /tcg-ucs-fe/test/long
 ///
-/// Mirrors Go's `LongHandler`: waits 15 s. Returns 408 on cancellation.
+/// Mirrors `Go`'s `LongHandler`: waits 15 s. Returns 408 on cancellation.
 pub async fn long() -> Response {
     tokio::select! {
-        _ = time::sleep(Duration::from_secs(15)) => {
+        () = time::sleep(Duration::from_secs(15)) => {
             info!("Long handler processed");
             Json(serde_json::json!({
                 "code":    200,
@@ -300,15 +300,12 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
     }
 
     // 3. Parse the multipart body.
-    let field = match parse_multipart_file(&body_bytes, &boundary) {
-        Some(f) => f,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "code": 400, "message": "file is required" })),
-            )
-                .into_response();
-        }
+    let Some(field) = parse_multipart_file(&body_bytes, &boundary) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "file is required" })),
+        )
+            .into_response();
     };
 
     // 4. Extension validation (v2 only).
@@ -395,16 +392,14 @@ fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> 
             break;
         }
 
-        let next_delim = find_bytes(&body[part_start..], &delim)
-            .map(|i| part_start + i)
-            .unwrap_or(body.len());
+        let next_delim =
+            find_bytes(&body[part_start..], &delim).map_or(body.len(), |i| part_start + i);
 
         let part = &body[part_start..next_delim];
         start = next_delim;
 
-        let sep_pos = match find_bytes(part, sep) {
-            Some(p) => p,
-            None => continue,
+        let Some(sep_pos) = find_bytes(part, sep) else {
+            continue;
         };
         let headers_raw = &part[..sep_pos];
         let file_body = &part[sep_pos + sep.len()..];
@@ -419,8 +414,10 @@ fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> 
             .split(';')
             .map(str::trim)
             .find(|p| p.to_lowercase().starts_with("filename="))
-            .map(|p| p["filename=".len()..].trim_matches('"').to_string())
-            .unwrap_or_else(|| "upload".to_string());
+            .map_or_else(
+                || "upload".to_string(),
+                |p| p["filename=".len()..].trim_matches('"').to_string(),
+            );
 
         let data = if file_body.ends_with(b"\r\n") {
             &file_body[..file_body.len() - 2]

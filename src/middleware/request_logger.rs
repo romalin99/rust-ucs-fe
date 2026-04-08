@@ -55,16 +55,15 @@ pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
     let status = response.status().as_u16();
 
     let msg = format!(
-        "[{}/{}] [API-REQUEST] [END] URI: {}, Method: {}, Status: {}, Addr: {}, Elapsed: {}ms",
-        trace_id, span_id, path, method, status, client_ip, elapsed,
+        "[{trace_id}/{span_id}] [API-REQUEST] [END] URI: {path}, Method: {method}, Status: {status}, Addr: {client_ip}, Elapsed: {elapsed}ms",
     );
 
     // Call tracing macros DIRECTLY so file:line points to this middleware,
     // not to a wrapper function in logs.rs.
     match status {
-        s if s >= 500 => tracing::error!(target: "behavior", "{}", msg),
-        400..=499 => tracing::warn!(target: "behavior", "{}", msg),
-        _ => tracing::info!(target: "behavior", "{}", msg),
+        s if s >= 500 => tracing::error!(target: "behavior", "{msg}"),
+        400..=499 => tracing::warn!(target: "behavior", "{msg}"),
+        _ => tracing::info!(target: "behavior", "{msg}"),
     }
 
     response
@@ -92,7 +91,10 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     let x_trace = headers.get("X-Trace-Id").and_then(|v| v.to_str().ok());
     let x_span = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
     if x_trace.is_some() || x_span.is_some() {
-        return (x_trace.unwrap_or("unknown").to_string(), x_span.unwrap_or("unknown").to_string());
+        return (
+            x_trace.map_or_else(|| "unknown".to_string(), ToString::to_string),
+            x_span.map_or_else(|| "unknown".to_string(), ToString::to_string),
+        );
     }
 
     // 2. W3C traceparent: "00-<traceID>-<spanID>-<flags>"
@@ -116,7 +118,8 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     //    trace_id = 32 hex chars, span_id = 16 hex chars.
     let raw1 = uuid::Uuid::new_v4().as_u128();
     let raw2 = uuid::Uuid::new_v4().as_u128();
-    let trace_id = format!("{:032x}", raw1);
+    let trace_id = format!("{raw1:032x}");
+    #[allow(clippy::cast_possible_truncation)]
     let span_id = format!("{:016x}", raw2 as u64);
     (trace_id, span_id)
 }
@@ -172,9 +175,9 @@ fn is_public_ip(ip: &str) -> bool {
 }
 
 /// Mirrors Go 1.17+ `net.IP.IsPrivate()`.
-/// Go's IsPrivate covers RFC 1918 (10.x, 172.16-31.x, 192.168.x) and fc00::/7,
-/// but NOT link-local (169.254.x.x / fe80::/10).
-fn is_private(addr: &IpAddr) -> bool {
+/// Go's `IsPrivate` covers RFC 1918 (10.x, 172.16-31.x, 192.168.x) and `fc00::/7`,
+/// but NOT link-local (169.254.x.x / `fe80::/10`).
+const fn is_private(addr: &IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => v4.is_private(),
         IpAddr::V6(v6) => {

@@ -1,4 +1,4 @@
-/// Oracle repository for TCG_UCS.FIELD_ID_USS_MAPPING.
+/// Oracle repository for `TCG_UCS.FIELD_ID_USS_MAPPING`.
 ///
 /// Mirrors Go's `internal/repository/field_id_uss_mapping.go`.
 /// Provides full CRUD operations + cache-loader query.
@@ -21,31 +21,28 @@ const COLUMNS: &str = "ID, MCS_ID, FIELD_ID, FIELD_NAME, USS_ID, CREATE_TIME, UP
 // ---------------------------------------------------------------------------
 
 static SQL_FIND_ALL: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
-    format!("SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING ORDER BY FIELD_ID, USS_ID", COLUMNS)
+    format!("SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING ORDER BY FIELD_ID, USS_ID")
 });
 
 static SQL_FIND_ONE: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
-    format!("SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1", COLUMNS)
+    format!("SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1")
 });
 
 static SQL_FIND_BY_FIELD_MCS: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
     format!(
-        "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 AND MCS_ID = :2",
-        COLUMNS
+        "SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 AND MCS_ID = :2"
     )
 });
 
 static SQL_FIND_BY_FIELD_USS: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
     format!(
-        "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 AND USS_ID = :2",
-        COLUMNS
+        "SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 AND USS_ID = :2"
     )
 });
 
 static SQL_FIND_LIST_BY_FIELD: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
     format!(
-        "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 ORDER BY USS_ID",
-        COLUMNS
+        "SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE FIELD_ID = :1 ORDER BY USS_ID"
     )
 });
 
@@ -59,6 +56,7 @@ pub struct FieldIdUssMappingRepository {
 }
 
 impl FieldIdUssMappingRepository {
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(pool: Arc<OraclePool>, read_timeout_secs: u64) -> Self {
         Self {
             pool,
@@ -193,8 +191,7 @@ impl FieldIdUssMappingRepository {
                 let conn = pool.get().context("Oracle pool: get connection")?;
                 // lock_wait is a runtime value, so the SQL cannot be a static.
                 let sql = format!(
-                    "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1 FOR UPDATE WAIT {}",
-                    COLUMNS, lock_wait
+                    "SELECT {COLUMNS} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1 FOR UPDATE WAIT {lock_wait}"
                 );
                 let mut rows = conn.query(&sql, &[&id]).context("find_one_for_update query")?;
                 if let Some(row_result) = rows.next() {
@@ -210,7 +207,7 @@ impl FieldIdUssMappingRepository {
         .context("spawn_blocking panicked")?
     }
 
-    /// Find by FIELD_ID + MCS_ID (unique index).
+    /// Find by `FIELD_ID` + `MCS_ID` (unique index).
     /// Mirrors Go's `FieldIdUssMappingRepo.FindByFieldIDAndMcsID`.
     pub async fn find_by_field_id_and_mcs_id(
         &self,
@@ -240,7 +237,7 @@ impl FieldIdUssMappingRepository {
         .context("spawn_blocking panicked")?
     }
 
-    /// Find by FIELD_ID + USS_ID (unique index).
+    /// Find by `FIELD_ID` + `USS_ID` (unique index).
     /// Mirrors Go's `FieldIdUssMappingRepo.FindByFieldIDAndUssID`.
     pub async fn find_by_field_id_and_uss_id(
         &self,
@@ -270,7 +267,7 @@ impl FieldIdUssMappingRepository {
         .context("spawn_blocking panicked")?
     }
 
-    /// Find all mappings for a given FIELD_ID, ordered by USS_ID.
+    /// Find all mappings for a given `FIELD_ID`, ordered by `USS_ID`.
     /// Mirrors Go's `FieldIdUssMappingRepo.FindListByFieldID`.
     pub async fn find_list_by_field_id(&self, field_id: &str) -> Result<Vec<FieldIdUssMapping>> {
         let pool = self.pool.clone();
@@ -325,8 +322,7 @@ impl FieldIdUssMappingRepository {
                 conn.commit().context("commit update")?;
                 if affected == 0 {
                     return Err(anyhow!(
-                        "update field_id_uss_mapping: no rows affected for ID {}",
-                        id
+                        "update field_id_uss_mapping: no rows affected for ID {id}"
                     ));
                 }
                 Ok(affected)
@@ -354,8 +350,7 @@ impl FieldIdUssMappingRepository {
                 conn.commit().context("commit delete")?;
                 if affected == 0 {
                     return Err(anyhow!(
-                        "delete field_id_uss_mapping: no rows affected for ID {}",
-                        id
+                        "delete field_id_uss_mapping: no rows affected for ID {id}"
                     ));
                 }
                 Ok(affected)

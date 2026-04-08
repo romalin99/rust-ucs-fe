@@ -40,8 +40,9 @@ pub fn string_to_i64_default(s: &str, default: i64) -> i64 {
 ///
 /// Convenience wrapper over [`string_to_i64_default`] for the common
 /// `int` (32-bit) use case that matches Go's `int`.
+#[allow(clippy::cast_possible_truncation)]
 pub fn string_to_i32_default(s: &str, default: i32) -> i32 {
-    string_to_i64_default(s, default as i64) as i32
+    string_to_i64_default(s, i64::from(default)) as i32
 }
 
 /// Parse a string to `f64`, returning `default` on failure.
@@ -108,7 +109,7 @@ pub fn opt_i64_or(v: Option<i64>, default: i64) -> i64 {
 /// Wrap a non-zero `i64` in `Some`, `None` for zero.
 ///
 /// Mirrors Go's `conv.NewNullInt64(i)`.
-pub fn new_null_i64(i: i64) -> Option<i64> {
+const fn new_null_i64(i: i64) -> Option<i64> {
     if i == 0 { None } else { Some(i) }
 }
 
@@ -129,7 +130,7 @@ pub fn opt_i32_or(v: Option<i32>, default: i32) -> i32 {
 /// Wrap a non-zero `i32` in `Some`, `None` for zero.
 ///
 /// Mirrors Go's `conv.NewNullInt32(i)`.
-pub fn new_null_i32(i: i32) -> Option<i32> {
+const fn new_null_i32(i: i32) -> Option<i32> {
     if i == 0 { None } else { Some(i) }
 }
 
@@ -143,7 +144,7 @@ pub fn opt_i16_or(v: Option<i16>, default: i16) -> i16 {
 /// Wrap a non-zero `i16` in `Some`, `None` for zero.
 ///
 /// Mirrors Go's `conv.NewNullInt16(i)`.
-pub fn new_null_i16(i: i16) -> Option<i16> {
+const fn new_null_i16(i: i16) -> Option<i16> {
     if i == 0 { None } else { Some(i) }
 }
 
@@ -162,6 +163,7 @@ pub fn opt_bool(v: Option<bool>) -> bool {
 }
 
 /// Wrap a `bool` in `Some` (always valid, equivalent to Go's `NewNullBool`).
+#[allow(clippy::unnecessary_wraps)]
 pub fn new_null_bool(b: bool) -> Option<bool> {
     Some(b)
 }
@@ -221,7 +223,7 @@ mod tests {
     #[test]
     fn test_string_to_f64_default() {
         assert!((string_to_f64_default("1.23", 0.0) - 1.23).abs() < 1e-9);
-        assert_eq!(string_to_f64_default("", 0.5), 0.5);
-        assert_eq!(string_to_f64_default("nan", 99.0), 99.0);
+        assert!((string_to_f64_default("", 0.5) - 0.5).abs() < f64::EPSILON);
+        assert!((string_to_f64_default("nan", 99.0) - 99.0).abs() < f64::EPSILON);
     }
 }

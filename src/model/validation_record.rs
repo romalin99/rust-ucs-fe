@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// TCG_UCS.VALIDATION_RECORD row.
+/// `TCG_UCS.VALIDATION_RECORD` row.
 #[derive(Debug, Clone)]
 pub struct ValidationRecord {
     pub id: Option<i64>,

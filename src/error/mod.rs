@@ -125,7 +125,8 @@ pub enum Module {
 }
 
 impl Module {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Oracle => "oracle",
             Self::Redis => "redis",
@@ -255,20 +256,23 @@ impl AppError {
     fn module_and_code(&self) -> (&Module, &ErrorCode) {
         match self {
             Self::MerchantNotFound(_) => (&Module::Merchant, &ErrorCode::MERCHANT_NOT_FOUND),
-            Self::CustomerFetchFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
-            Self::CustomerPersonalInfoFetchFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
+            Self::CustomerFetchFailed(_) | Self::CustomerPersonalInfoFetchFailed(_) => {
+                (&Module::Uss, &ErrorCode::USS_CLIENT_ERR)
+            }
             Self::QuestionLimitExceeded => (&Module::Verification, &ErrorCode::EXCEED_LIMIT),
             Self::RedisNotFound => (&Module::Redis, &ErrorCode::DATA_NOT_FOUND),
             Self::WpsApiFailed(_) => (&Module::Wps, &ErrorCode::WPS_CLIENT_ERR),
-            Self::EmailAlreadyBound => (&Module::Verification, &ErrorCode::STATUS_ERR),
-            Self::PhoneAlreadyBound => (&Module::Verification, &ErrorCode::STATUS_ERR),
-            Self::ParseJsonFailed(_) => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
+            Self::EmailAlreadyBound | Self::PhoneAlreadyBound => {
+                (&Module::Verification, &ErrorCode::STATUS_ERR)
+            }
+            Self::ParseJsonFailed(_) | Self::JsonError(_) => {
+                (&Module::NonBusiness, &ErrorCode::JSON_ERR)
+            }
             Self::VerifyPlayerInfoFailed(_) => (&Module::Mcs, &ErrorCode::MCS_CLIENT_ERR),
             Self::PasswordResetFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
             Self::OracleError(_) => (&Module::Oracle, &ErrorCode::SQL_EXECUTION_FAIL),
             Self::RedisError(_) => (&Module::Redis, &ErrorCode::SYS_ERR),
             Self::HttpClientError(_) => (&Module::NonBusiness, &ErrorCode::NETWORK_TIMEOUT),
-            Self::JsonError(_) => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
             Self::Internal(_) => (&Module::NonBusiness, &ErrorCode::SYS_ERR),
         }
     }
@@ -309,6 +313,7 @@ pub struct ApiSuccess<T: Serialize> {
 }
 
 impl<T: Serialize> ApiSuccess<T> {
+    #[must_use]
     pub fn new(data: T) -> Self {
         Self {
             success: true,
@@ -332,6 +337,7 @@ pub struct SuccessResponse<T: Serialize> {
 }
 
 impl<T: Serialize> SuccessResponse<T> {
+    #[must_use]
     pub fn new(value: T) -> Self {
         Self {
             success: true,
@@ -351,6 +357,7 @@ pub struct BaseResponse {
 }
 
 impl BaseResponse {
+    #[must_use]
     pub fn ok() -> Self {
         Self {
             success: true,
@@ -358,6 +365,7 @@ impl BaseResponse {
         }
     }
 
+    #[must_use]
     pub fn ok_with_message(msg: impl Into<String>) -> Self {
         Self {
             success: true,

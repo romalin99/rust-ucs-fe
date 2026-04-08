@@ -68,8 +68,9 @@ fn log_stats() {
     );
 }
 
-/// Read VmRSS and VmSize from `/proc/self/status` on Linux.
+/// Read `VmRSS` and `VmSize` from `/proc/self/status` on Linux.
 /// Returns `None` on other platforms or if parsing fails.
+#[allow(clippy::missing_const_for_fn)]
 fn read_proc_mem() -> Option<(f64, f64)> {
     #[cfg(target_os = "linux")]
     {

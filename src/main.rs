@@ -11,8 +11,8 @@
 ///   4. Build all infrastructure (Oracle pool, Redis, HTTP clients, repos)
 ///   5. Start field-config loader (initial load + 30-min periodic refresh)
 ///   6. Start cron scheduler
-///   7. Build domain service → AppState → router
-///   8. Bind listener; serve with graceful shutdown on SIGINT / SIGTERM
+///   7. Build domain service → `AppState` → router
+///   8. Bind listener; serve with graceful shutdown on `SIGINT` / `SIGTERM`
 use std::{net::SocketAddr, sync::Arc};
 
 use tokio::{net::TcpListener, signal};
@@ -288,9 +288,9 @@ async fn shutdown_signal() {
     let hangup = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c    => info!("received SIGINT"),
-        _ = terminate => info!("received SIGTERM"),
-        _ = hangup    => info!("received SIGHUP"),
+        () = ctrl_c    => info!("received SIGINT"),
+        () = terminate => info!("received SIGTERM"),
+        () = hangup    => info!("received SIGHUP"),
     }
 
     info!("shutdown signal received, draining in-flight requests...");

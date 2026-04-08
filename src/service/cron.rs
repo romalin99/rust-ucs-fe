@@ -138,7 +138,7 @@ async fn execute_job(name: &str, repos: &CronRepos) -> anyhow::Result<()> {
             tracing::info!(job = name, "starting to sync USS mapping configs");
             do_load_uss_mapping_configs(&repos.uss_mapping_repo).await?;
         }
-        other => anyhow::bail!("Unknown job: {}", other),
+        other => anyhow::bail!("Unknown job: {other}"),
     }
     Ok(())
 }

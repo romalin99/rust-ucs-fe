@@ -41,7 +41,7 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
         return;
     }
     let mut map: Vec<(i32, RedisInstance)> = Vec::with_capacity(dbs.len());
-    let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
+    let addr = cfg_addr.first().map_or("127.0.0.1:6379", String::as_str);
     for db_entry in dbs {
         let url = if cfg_password.is_empty() {
             format!("redis://{}/{}", addr, db_entry.db)
@@ -62,6 +62,7 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
                         }
                         let ttl =
                             Duration::from_secs(db_entry.set_default_expiration.unsigned_abs());
+                        #[allow(clippy::cast_possible_truncation)]
                         map.push((
                             db_entry.db as i32,
                             RedisInstance {
@@ -92,10 +93,10 @@ pub fn get_db_instance(idx: i32) -> anyhow::Result<&'static RedisInstance> {
         .iter()
         .find(|(db, _)| *db == idx)
         .map(|(_, inst)| inst)
-        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
+        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{idx}"))
 }
 
-/// Clone the pre-built ConnectionManager for a given DB index.
+/// Clone the pre-built `ConnectionManager` for a given DB index.
 /// Cloning is O(1) — `ConnectionManager` is Arc-backed.
 pub fn get_db_manager(idx: i32) -> anyhow::Result<redis::aio::ConnectionManager> {
     REDIS_DB_MAP
@@ -104,7 +105,7 @@ pub fn get_db_manager(idx: i32) -> anyhow::Result<redis::aio::ConnectionManager>
         .iter()
         .find(|(db, _)| *db == idx)
         .map(|(_, inst)| inst.manager.clone())
-        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{}", idx))
+        .ok_or_else(|| anyhow::anyhow!("Redis instance not found for dbidx:{idx}"))
 }
 
 /// Close all Redis multi-DB instances.
@@ -114,7 +115,7 @@ pub fn close_redis_multi_db() {
         tracing::info!(count = map.len(), "closing Redis multi-DB instances");
         // redis::Client instances are reference-counted; dropping all Arcs will close connections.
         // The static OnceCell itself cannot be cleared, but we log for operational visibility.
-        for (db, _inst) in map.iter() {
+        for (db, _inst) in map {
             tracing::info!(db, "Redis DB instance marked for close");
         }
     }
@@ -143,7 +144,7 @@ pub fn start_oracle_pool_monitor(
                     let in_use = st.connections.saturating_sub(st.idle_connections);
                     let idle   = st.idle_connections;
                     let open   = st.connections;
-                    let rate   = if max_sz > 0 { (in_use as f64) / (max_sz as f64) * 100.0 } else { 0.0 };
+                    let rate   = if max_sz > 0 { f64::from(in_use) / f64::from(max_sz) * 100.0 } else { 0.0 };
                     tracing::info!(desc, max_open = max_sz, open, in_use, idle,
                         use_rate = format!("{:.1}%", rate), "Oracle pool stats");
                     if rate > 80.0 {
@@ -152,10 +153,10 @@ pub fn start_oracle_pool_monitor(
                     }
                     if let Some(m) = crate::pkg::metrics::METRICS.get() {
                         let lbl = &[desc];
-                        m.oracle.max_open.with_label_values(lbl).set(max_sz as f64);
-                        m.oracle.open.with_label_values(lbl).set(open as f64);
-                        m.oracle.in_use.with_label_values(lbl).set(in_use as f64);
-                        m.oracle.idle.with_label_values(lbl).set(idle as f64);
+                        m.oracle.max_open.with_label_values(lbl).set(max_sz.into());
+                        m.oracle.open.with_label_values(lbl).set(open.into());
+                        m.oracle.in_use.with_label_values(lbl).set(in_use.into());
+                        m.oracle.idle.with_label_values(lbl).set(idle.into());
                         m.oracle.usage_rate.with_label_values(lbl).set(rate);
                     }
                 }
@@ -276,12 +277,12 @@ impl AppInfra {
 
         // ── Redis ─────────────────────────────────────────────────────────────
         tracing::info!("Connecting to Redis");
-        let redis_addr = cfg.redis.addr.first().map(|s| s.as_str()).unwrap_or("127.0.0.1:6379");
+        let redis_addr = cfg.redis.addr.first().map_or("127.0.0.1:6379", |s| s.as_str());
 
         let redis_url = if cfg.redis.password.is_empty() {
-            format!("redis://{}/{}", redis_addr, cfg.redis.db)
+            format!("redis://{redis_addr}/{}", cfg.redis.db)
         } else {
-            format!("redis://:{}@{}/{}", cfg.redis.password, redis_addr, cfg.redis.db)
+            format!("redis://:{}@{redis_addr}/{}", cfg.redis.password, cfg.redis.db)
         };
 
         let redis_client = redis::Client::open(redis_url)

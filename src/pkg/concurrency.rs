@@ -51,13 +51,11 @@ pub fn run_safe<F: FnOnce()>(f: F) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     if let Err(e) = result {
         let bt = std::backtrace::Backtrace::force_capture();
-        let msg = if let Some(s) = e.downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = e.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(ToString::to_string)
+            .or_else(|| e.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
         tracing::error!("[run_safe] panic: {msg}\nstack backtrace:\n{bt}");
         eprintln!("[run_safe] panic: {msg}\nstack backtrace:\n{bt}");
         crate::pkg::logs::flush();
@@ -186,12 +184,9 @@ impl TaskPool {
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let permit = match self.semaphore.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::warn!("TaskPool: semaphore closed, dropping task");
-                return;
-            }
+        let Ok(permit) = self.semaphore.clone().acquire_owned().await else {
+            tracing::warn!("TaskPool: semaphore closed, dropping task");
+            return;
         };
 
         tokio::spawn(async move {
@@ -204,6 +199,7 @@ impl TaskPool {
     ///
     /// Note: Tokio `Semaphore` doesn't support dynamic resize; this is a
     /// no-op kept for API parity with Go's `gos.Resize(count)`.
+    #[allow(clippy::unused_self)]
     pub fn resize(&self, _new_concurrency: usize) {}
 
     /// Closes the semaphore, preventing new tasks from being submitted.

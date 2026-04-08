@@ -28,10 +28,10 @@ mod tests {
 
     #[test]
     fn test_round2_basic() {
-        assert_eq!(round2(1.234), 1.23);
-        assert_eq!(round2(1.235), 1.24);
-        assert_eq!(round2(1.0), 1.0);
-        assert_eq!(round2(0.0), 0.0);
-        assert_eq!(round2(-1.235), -1.24);
+        assert!((round2(1.234) - 1.23).abs() < f64::EPSILON);
+        assert!((round2(1.235) - 1.24).abs() < f64::EPSILON);
+        assert!((round2(1.0) - 1.0).abs() < f64::EPSILON);
+        assert!((round2(0.0) - 0.0).abs() < f64::EPSILON);
+        assert!((round2(-1.235) - (-1.24)).abs() < f64::EPSILON);
     }
 }

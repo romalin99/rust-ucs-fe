@@ -109,7 +109,7 @@ pub fn apply_field_setters(
             continue;
         }
 
-        let field_value = field_id_map.get(s.field_id).map(|s| s.as_str()).unwrap_or("");
+        let field_value = field_id_map.get(s.field_id).map_or("", |s| s.as_str());
 
         if field_value.is_empty() {
             // 已绑定但未填写，MCS 约定用 "NULL" 表示空值

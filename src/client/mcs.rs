@@ -44,6 +44,7 @@ pub struct VerifyPlayerFinanceInfo {
 /// Mirrors Go's `VerifyPlayerHistoryInfo` (request side).
 ///
 /// Holds transaction history fields sent to MCS for verification.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct VerifyPlayerHistoryInfo {
     #[serde(rename = "lastDepositAmount")]
@@ -91,6 +92,7 @@ pub struct VerifyFinanceHistoryReq {
 ///
 /// Per-field match scores returned for transaction history fields.
 /// Score semantics (MCS): 3 = matched, 2 = empty-match, 1/0 = not matched.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct VerifyPlayerHistoryResult {
     #[serde(rename = "lastDepositAmount", default)]
@@ -293,6 +295,8 @@ pub struct McsClient {
 }
 
 impl McsClient {
+    const OP_VERIFY_PLAYER_INFO: &str = "verifyPlayerInfo";
+
     /// Mirrors Go's `NewClient(host, basePath)`.
     pub fn new(cfg: &ServiceConfig) -> Self {
         let inner = Client::builder()
@@ -308,7 +312,7 @@ impl McsClient {
             if p.is_empty() { String::new() } else { format!("{p}/") }
         };
 
-        let verify_player_info_url = format!("{}/{}player/verifyPlayerInfo", base_url, base_path);
+        let verify_player_info_url = format!("{base_url}/{base_path}player/verifyPlayerInfo");
 
         Self {
             inner,
@@ -338,8 +342,7 @@ impl McsClient {
                         max  = MAX_RETRIES,
                         url,
                         error = %e,
-                        "[MCSClient] attempt {}/{} failed, retrying...",
-                        attempt, MAX_RETRIES
+                        "[MCSClient] attempt {attempt}/{MAX_RETRIES} failed, retrying..."
                     );
                     last_err = e;
                 }
@@ -347,19 +350,16 @@ impl McsClient {
                     tracing::warn!(
                         attempt,
                         url,
-                        "[MCSClient] attempt {}/{} timed out after {:?}",
-                        attempt,
-                        MAX_RETRIES,
-                        SINGLE_REQ_TIMEOUT
+                        "[MCSClient] attempt {attempt}/{MAX_RETRIES} timed out after {SINGLE_REQ_TIMEOUT:?}"
                     );
                     last_err =
-                        anyhow::anyhow!("MCS request timed out after {:?}", SINGLE_REQ_TIMEOUT);
+                        anyhow::anyhow!("MCS request timed out after {SINGLE_REQ_TIMEOUT:?}");
                 }
             }
 
             if attempt < MAX_RETRIES {
                 tokio::select! {
-                    _ = sleep(RETRY_DELAY) => {}
+                    () = sleep(RETRY_DELAY) => {}
                     _ = tokio::signal::ctrl_c() => {
                         return Err(anyhow::anyhow!("context cancelled, aborting MCS retries"));
                     }
@@ -413,12 +413,11 @@ impl McsClient {
         req: &VerifyFinanceHistoryReq,
     ) -> Result<VerifyFinanceHistoryResp> {
         let start = Instant::now();
-        const OP: &str = "verifyPlayerInfo";
-
         let url = &self.verify_player_info_url;
 
-        let req_body = serde_json::to_vec(req)
-            .with_context(|| format!("{OP}: marshal request body failed"))?;
+        let req_body = serde_json::to_vec(req).with_context(|| {
+            format!("{}: marshal request body failed", Self::OP_VERIFY_PLAYER_INFO)
+        })?;
         let body_bytes = bytes::Bytes::from(req_body);
 
         tracing::info!(
@@ -440,7 +439,7 @@ impl McsClient {
                 );
                 e
             })
-            .with_context(|| format!("{OP}: request failed"))?;
+            .with_context(|| format!("{}: request failed", Self::OP_VERIFY_PLAYER_INFO))?;
 
         tracing::info!(
             merchant = %headers.merchant,
@@ -450,7 +449,11 @@ impl McsClient {
         );
 
         serde_json::from_slice::<VerifyFinanceHistoryResp>(&resp_body).with_context(|| {
-            format!("{OP}: unmarshal failed, raw={}", String::from_utf8_lossy(&resp_body))
+            format!(
+                "{}: unmarshal failed, raw={}",
+                Self::OP_VERIFY_PLAYER_INFO,
+                String::from_utf8_lossy(&resp_body)
+            )
         })
     }
 }

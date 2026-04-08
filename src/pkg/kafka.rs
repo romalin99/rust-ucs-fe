@@ -82,7 +82,7 @@ impl ProducerConfig {
 
         if let Some(ov) = self.topics.get(topic) {
             if !ov.compression.is_empty() {
-                base.compression = ov.compression.clone();
+                base.compression.clone_from(&ov.compression);
             }
             if ov.max_message_bytes > 0 {
                 base.max_message_bytes = ov.max_message_bytes;
@@ -94,7 +94,7 @@ impl ProducerConfig {
                 base.batch_size = ov.batch_size;
             }
             if !ov.acks.is_empty() {
-                base.acks = ov.acks.clone();
+                base.acks.clone_from(&ov.acks);
             }
             if ov.retries > 0 {
                 base.retries = ov.retries;
@@ -107,6 +107,7 @@ impl ProducerConfig {
     }
 
     /// Returns `batch_max_bytes` with a 1 MB default.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn batch_max_bytes(&self) -> i32 {
         if self.batch_max_bytes > 0 { self.batch_max_bytes } else { 1024 * 1024 }
     }
@@ -116,6 +117,7 @@ impl ProducerConfig {
     /// Mirrors Go's `ProducerConfig.RequestTimeout()`.
     pub fn request_timeout(&self) -> Duration {
         if self.request_timeout_ms > 0 {
+            #[allow(clippy::cast_sign_loss)]
             Duration::from_millis(self.request_timeout_ms as u64)
         } else {
             Duration::from_secs(30)
@@ -147,6 +149,7 @@ impl ConsumerTopicConfig {
     /// Auto-commit interval as a [`Duration`] (default 5 s).
     pub fn auto_commit_interval(&self) -> Duration {
         if self.auto_commit_interval_ms > 0 {
+            #[allow(clippy::cast_sign_loss)]
             Duration::from_millis(self.auto_commit_interval_ms as u64)
         } else {
             Duration::from_secs(5)
@@ -156,6 +159,7 @@ impl ConsumerTopicConfig {
     /// Fetch max-wait as a [`Duration`] (default 500 ms).
     pub fn fetch_max_wait(&self) -> Duration {
         if self.fetch_max_wait_ms > 0 {
+            #[allow(clippy::cast_sign_loss)]
             Duration::from_millis(self.fetch_max_wait_ms as u64)
         } else {
             Duration::from_millis(500)
@@ -212,7 +216,7 @@ impl ConsumerConfig {
 
         if let Some(ov) = self.topics.get(topic) {
             if !ov.group_id.is_empty() {
-                base.group_id = ov.group_id.clone();
+                base.group_id.clone_from(&ov.group_id);
             }
             if !ov.auto_offset_reset.is_empty() {
                 base.auto_offset_reset = normalize_offset_reset(&ov.auto_offset_reset);
@@ -236,6 +240,7 @@ impl ConsumerConfig {
     /// Session timeout as a [`Duration`] (default 10 s).
     pub fn session_timeout(&self) -> Duration {
         if self.session_timeout_ms > 0 {
+            #[allow(clippy::cast_sign_loss)]
             Duration::from_millis(self.session_timeout_ms as u64)
         } else {
             Duration::from_secs(10)
@@ -245,6 +250,7 @@ impl ConsumerConfig {
     /// Heartbeat interval as a [`Duration`] (default 3 s).
     pub fn heartbeat_interval(&self) -> Duration {
         if self.heartbeat_interval_ms > 0 {
+            #[allow(clippy::cast_sign_loss)]
             Duration::from_millis(self.heartbeat_interval_ms as u64)
         } else {
             Duration::from_secs(3)
@@ -252,23 +258,28 @@ impl ConsumerConfig {
     }
 
     /// Fetch max bytes with a 50 MB default.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn fetch_max_bytes_or_default(&self) -> i32 {
         if self.fetch_max_bytes > 0 { self.fetch_max_bytes } else { 50 * 1024 * 1024 }
     }
 
     /// Max poll records with a 100 default.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn max_poll_records_or_default(&self) -> i32 {
         if self.max_poll_records > 0 { self.max_poll_records } else { 100 }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     fn fetch_max_wait_ms(&self) -> i32 {
         if self.fetch_max_wait_ms > 0 { self.fetch_max_wait_ms } else { 500 }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     fn fetch_min_bytes(&self) -> i32 {
         if self.fetch_min_bytes > 0 { self.fetch_min_bytes } else { 1 }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     fn concurrency(&self) -> i32 {
         if self.concurrency > 0 { self.concurrency } else { 1 }
     }
@@ -290,9 +301,8 @@ pub struct KafkaConfig {
 /// Mirrors Go's `normalizeOffsetReset`.
 fn normalize_offset_reset(v: &str) -> String {
     match v {
-        "newest" => "latest".into(),
+        "newest" | "" => "latest".into(),
         "oldest" => "earliest".into(),
-        "" => "latest".into(),
         other => other.into(),
     }
 }
@@ -416,6 +426,7 @@ impl Producer {
     ///
     /// Stub — returns [`KafkaError::ProducerNotInitialized`] until a real Kafka
     /// client crate is wired in.
+    #[allow(clippy::unused_async)]
     pub async fn produce(&self, key: &[u8], value: &[u8]) -> Result<(), KafkaError> {
         tracing::debug!(
             topic = %self.cfg.topic,
@@ -427,6 +438,7 @@ impl Producer {
     }
 
     /// Produce a message to an explicit topic.
+    #[allow(clippy::unused_async)]
     pub async fn produce_to(
         &self,
         topic: &str,
@@ -442,6 +454,7 @@ impl Producer {
         Err(KafkaError::ProducerNotInitialized)
     }
 
+    #[allow(clippy::unused_self)]
     pub fn close(&self) {
         tracing::info!("kafka producer closed (stub)");
     }
@@ -482,6 +495,7 @@ impl Consumer {
     /// Kafka crate is wired in.
     ///
     /// Mirrors Go's `Consumer.SubscribeTopic`.
+    #[allow(clippy::unused_async)]
     pub async fn subscribe_topic(
         &self,
         topic: &str,
@@ -497,6 +511,7 @@ impl Consumer {
         Err(KafkaError::ConsumerNotInitialized)
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn close(&self) {
         tracing::info!("kafka consumer closed (stub)");
     }
@@ -514,9 +529,9 @@ impl KafkaClients {
     /// Mirrors Go's `Config.InitProducer()` + `Config.InitConsumer()`.
     pub fn init(cfg: &KafkaConfig) -> Self {
         let producer =
-            if !cfg.producer.brokers.is_empty() { Producer::new(&cfg.producer) } else { None };
+            if cfg.producer.brokers.is_empty() { None } else { Producer::new(&cfg.producer) };
         let consumer =
-            if !cfg.consumer.brokers.is_empty() { Consumer::new(&cfg.consumer) } else { None };
+            if cfg.consumer.brokers.is_empty() { None } else { Consumer::new(&cfg.consumer) };
         Self { producer, consumer }
     }
 }

@@ -37,16 +37,20 @@ impl Default for AppTimeouts {
 }
 
 impl AppTimeouts {
-    pub fn quick_duration(&self) -> Duration {
+    #[must_use]
+    pub const fn quick_duration(&self) -> Duration {
         Duration::from_secs(self.quick)
     }
-    pub fn normal_duration(&self) -> Duration {
+    #[must_use]
+    pub const fn normal_duration(&self) -> Duration {
         Duration::from_secs(self.normal)
     }
-    pub fn long_duration(&self) -> Duration {
+    #[must_use]
+    pub const fn long_duration(&self) -> Duration {
         Duration::from_secs(self.long)
     }
-    pub fn upload_duration(&self) -> Duration {
+    #[must_use]
+    pub const fn upload_duration(&self) -> Duration {
         Duration::from_secs(self.upload)
     }
 }
@@ -90,7 +94,7 @@ impl<'de> serde::Deserialize<'de> for JobConfig {
             enabled: Option<bool>,
         }
         let raw = Raw::deserialize(deserializer)?;
-        Ok(JobConfig {
+        Ok(Self {
             cron: raw.cron.unwrap_or_default(),
             interval: raw.interval.unwrap_or(0),
             timeout: raw.timeout.unwrap_or(60),
@@ -116,11 +120,13 @@ pub struct ServiceConfig {
 ///
 /// Mirrors Go's `pkg/oracle.Config` (TOML key `[oracle]`).
 /// Field names match Go's `mapstructure` keys so the same TOML file drives both services.
+///
+/// `BigCache` is a Go-specific in-process LRU cache library.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct OracleConfig {
     #[serde(default)]
     pub user: String,
-    /// TOML key: `passwd`  (mirrors Go's `OraclePWD string \`mapstructure:"passwd"\``).
+    /// TOML key: `passwd`  (mirrors Go's `OraclePWD string mapstructure:"passwd"`).
     #[serde(default, alias = "passwd")]
     pub password: String,
     /// TOML key: `addr_connect_stringer`.
@@ -150,7 +156,6 @@ pub struct OracleConfig {
     /// Per-query read timeout in seconds (TOML key: `read_timeout`).
     #[serde(default = "default_15_u64", alias = "readTimeout")]
     pub read_timeout: u64,
-    /// Per-query write timeout in seconds.
     /// Per-query write timeout in seconds (TOML key: `write_timeout`).
     #[serde(default = "default_15_u64", alias = "writeTimeout")]
     pub write_timeout: u64,
@@ -192,7 +197,7 @@ pub struct RedisDbEntry {
 pub struct TelemetryConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Collector endpoint, e.g. `"localhost:4318"` (OTLP HTTP).
+    /// Collector endpoint, e.g. `"localhost:4318"` (`OTLP` HTTP).
     #[serde(default)]
     pub endpoint: String,
     /// Service name reported to the trace backend (TOML key: `server_name`).
@@ -204,7 +209,7 @@ pub struct TelemetryConfig {
     /// Batcher type: `"otlp"` | `"none"` (default `"none"`).
     #[serde(default = "default_batcher")]
     pub batcher: String,
-    /// Paths the OTel middleware should skip (no spans created).
+    /// Paths the `OTel` middleware should skip (no spans created).
     #[serde(default)]
     pub skip_paths: Vec<String>,
 }
@@ -331,7 +336,7 @@ pub struct PprofConfig {
 
 /// Mirrors Go's `pkg/bigcache.Config`.
 ///
-/// BigCache is a Go-specific in-process LRU cache library.  In a Rust service
+/// `BigCache` is a Go-specific in-process LRU cache library.  In a Rust service
 /// the equivalent is an in-memory `DashMap` with optional TTL tracking.
 /// This struct preserves the TOML key shape so the same config file can drive
 /// both services.
@@ -394,7 +399,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub consul: ConsulConfig,
 
-    /// Paths that the OTel trace middleware should skip.
+    /// Paths that the `OTel` trace middleware should skip.
     /// Mirrors Go's `Config.TraceIgnorePaths []string`.
     #[serde(default, rename = "traceIgnorePaths")]
     pub trace_ignore_paths: Vec<String>,
@@ -422,7 +427,7 @@ impl Default for AppConfig {
             bigcache: BigCacheConfig::default(),
             consul: ConsulConfig::default(),
             trace_ignore_paths: Vec::new(),
-            jobs: Default::default(),
+            jobs: std::collections::HashMap::default(),
         }
     }
 }
@@ -466,7 +471,7 @@ impl AppConfig {
                 },
                 "redis" => {
                     if key.as_str() == "password" {
-                        cfg.redis.password = v
+                        cfg.redis.password = v;
                     }
                 }
                 "log" => match key.as_str() {
@@ -503,25 +508,25 @@ pub async fn load_oracle_connect_info(env: &str) -> anyhow::Result<OracleConnect
     load_oracle_from_aws(env).await
 }
 
-fn default_sampler() -> f64 {
+const fn default_sampler() -> f64 {
     1.0
 }
-fn default_batcher() -> String {
-    "none".into()
+const fn default_batcher() -> String {
+    String::new()
 }
-fn default_300() -> u64 {
+const fn default_300() -> u64 {
     300
 }
-fn default_30_u64() -> u64 {
+const fn default_30_u64() -> u64 {
     30
 }
-fn default_60_u64() -> u64 {
+const fn default_60_u64() -> u64 {
     60
 }
-fn default_15_u64() -> u64 {
+const fn default_15_u64() -> u64 {
     15
 }
-fn default_1000() -> u32 {
+const fn default_1000() -> u32 {
     1000
 }
 fn default_info_str() -> String {
@@ -545,25 +550,25 @@ fn default_time_format() -> String {
 fn default_rotation() -> String {
     "size".into()
 }
-fn default_500() -> u32 {
+const fn default_500() -> u32 {
     500
 }
-fn default_10() -> u32 {
+const fn default_10() -> u32 {
     10
 }
-fn default_5() -> u32 {
+const fn default_5() -> u32 {
     5
 }
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
-fn default_30_u32() -> u32 {
+const fn default_30_u32() -> u32 {
     30
 }
-fn default_10_u32() -> u32 {
+const fn default_10_u32() -> u32 {
     10
 }
-fn default_50_u32() -> u32 {
+const fn default_50_u32() -> u32 {
     50
 }
 
@@ -576,7 +581,7 @@ pub async fn load_oracle_from_aws(env: &str) -> anyhow::Result<OracleConnectInfo
         "dev" => "tcg-uad/db/go-ucs-fe/dev",
         "sit" => "tcg-uad/db/go-ucs-fe/sit",
         "prod" => "tcg-uad/db/go-ucs-fe",
-        other => anyhow::bail!("unsupported environment: {}", other),
+        other => anyhow::bail!("unsupported environment: {other}"),
     };
 
     let resp = client
@@ -588,7 +593,7 @@ pub async fn load_oracle_from_aws(env: &str) -> anyhow::Result<OracleConnectInfo
 
     let secret_str = resp
         .secret_string()
-        .ok_or_else(|| anyhow::anyhow!("secret {} has no string value", secret_name))?;
+        .ok_or_else(|| anyhow::anyhow!("secret {secret_name} has no string value"))?;
 
     let info: OracleConnectInfo = serde_json::from_str(secret_str)?;
     Ok(info)
