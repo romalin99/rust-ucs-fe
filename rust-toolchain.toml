@@ -1,0 +1,14 @@
+[toolchain]
+channel    = "stable"         # stable/beta/nightly
+components = [
+    "rustfmt",                # 代码格式化
+    "clippy",                 # 静态分析
+    "rust-analyzer",          # IDE支持
+    "rust-src",               # 标准库源码
+]
+targets    = [
+    "x86_64-unknown-linux-gnu",   # Linux
+    "x86_64-apple-darwin",        # macOS Intel
+    "aarch64-apple-darwin",       # macOS M1/M2
+    "wasm32-unknown-unknown",     # WebAssembly（可选）
+]

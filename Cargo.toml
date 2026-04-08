@@ -1,9 +1,15 @@
 [package]
 name = "ucs-fe"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
+authors     = ["norman188@gmail.com"]
 description = "Player Self-Service Password Reset — UCS-FE (Rust/Axum port)"
-rust-version = "1.96"
+repository  = "git@github.com:romalin99/rust-ucs-fe.git"
+readme      = "README.md"
+license     = "MIT OR Apache-2.0"
+keywords    = ["web", "async", "api","axum"]
+categories  = ["web-programming"]
+rust-version = "1.94"
 
 [[bin]]
 name = "ucs-fe"
@@ -70,16 +76,39 @@ futures         = "0.3"
 tokio-util      = "0.7"
 bytes           = "1"
 
-# ── Build profiles ─────────────────────────────────────────────────────────────
 
+# ===== 开发依赖 =====
+[dev-dependencies]
+tokio-test   = "0.4"
+tempfile     = "3.8"
+wiremock     = "0.5"          # HTTP mock
+criterion    = "0.5"          # 基准测试
+proptest     = "1.4"          # 属性测试
+mockall      = "0.12"         # Mock生成
+
+# ===== 构建依赖 =====
+[build-dependencies]
+cc           = "1.0"
+
+# ===== 功能特性 =====
+[features]
+default = []
+
+# ── Build profiles ─────────────────────────────────────────────────────────────
+# ===== 编译优化 =====
 [profile.release]
-opt-level     = 3
-lto           = "thin"     # Cross-crate inlining without the full-LTO link overhead
-codegen-units = 1          # Single codegen unit for maximum inlining
-strip         = "debuginfo" # Remove debug info from binary (~30-40% smaller)
+opt-level    = 3              # 最高优化
+lto          = true           # 链接时优化
+codegen-units = 1             # 减少代码生成单元
+panic        = "abort"        # 直接abort（减小体积）
+strip        = true           # 移除符号表
+incremental  = false          # 禁用增量编译
 
 [profile.dev]
-opt-level = 1              # Faster compilation with basic optimisations
+opt-level    = 0              # 不优化（加快编译）
+debug        = true           # 包含调试信息
+debug-assertions = true       # 启用调试断言
+overflow-checks  = true       # 整数溢出检查
 
 [profile.dev.package."*"]
 opt-level = 3              # But keep dependencies fully optimised even in dev

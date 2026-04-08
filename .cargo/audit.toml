@@ -1,0 +1,12 @@
+[advisories]
+ignore = [
+# dev dependency only
+"RUSTSEC-2024-0384",
+
+# unmaintained but safe
+"RUSTSEC-2024-0436"
+]
+
+[output]
+quiet = false
+format = "terminal"

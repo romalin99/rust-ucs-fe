@@ -3,31 +3,96 @@
 # https://github.com/sagiegurari/cargo-make
 #
 # Usage:
-#   cargo make                  # fmt-check → debug build  (default)
-#   cargo make help             # list all tasks
-#   cargo make release          # release build
-#   cargo make run              # debug build → run
-#   cargo make ci               # full CI gate (fmt-check + clippy + test)
-#   cargo make ENV=sit run      # run with SIT config
+#   ── DEFAULT ──────────────────────────────────────────────────────────────
+#   cargo make                      # fmt-check → debug build (default)
+#   cargo make help                 # list all available tasks
+#
+#   ── BUILD ────────────────────────────────────────────────────────────────
+#   cargo make build                # compile debug binary
+#   cargo make debug                # alias for build
+#   cargo make release              # compile release binary (--locked)
+#   cargo make build-all            # compile ALL targets (debug)
+#   cargo make release-all          # compile ALL targets (release, --locked)
+#
+#   ── RUN ──────────────────────────────────────────────────────────────────
+#   cargo make run                  # debug build → run (ENV=dev)
+#   cargo make run-release          # release build → run
+#   cargo make run-dev              # run with ENV=dev
+#   cargo make run-sit              # run with ENV=sit
+#   cargo make run-prod             # run with ENV=prod (caution)
+#   cargo make ENV=sit run          # override ENV inline
+#
+#   ── CODE QUALITY ─────────────────────────────────────────────────────────
+#   cargo make fmt                  # format all source files
+#   cargo make fmt-check            # check formatting (CI)
+#   cargo make clippy               # run Clippy linter (deny warnings)
+#   cargo make lint                 # alias for clippy
+#   cargo make clippy-fix           # auto-apply Clippy fixes
+#   cargo make optimize             # clippy-fix → fmt
+#   cargo make check                # fast cargo check (no codegen)
+#
+#   ── TESTS ────────────────────────────────────────────────────────────────
+#   cargo make test                 # run all tests (--all-targets --locked)
+#   cargo make testv                # run tests with stdout visible
+#   cargo make test-release         # run tests in release mode
+#   cargo make nextest              # run tests with cargo-nextest
+#   cargo make bench                # run benchmarks
+#   cargo make cover                # generate HTML coverage report
+#
+#   ── DOCS ─────────────────────────────────────────────────────────────────
+#   cargo make doc                  # build docs (private items) + open
+#   cargo make doc-check            # build docs without opening (CI)
+#
+#   ── SECURITY & DEPENDENCIES ──────────────────────────────────────────────
+#   cargo make audit                # check CVEs in dependencies
+#   cargo make outdated             # list outdated dependencies
+#   cargo make udeps                # detect unused dependencies (nightly)
+#   cargo make update               # update Cargo.lock
+#   cargo make upgrade              # upgrade Cargo.toml constraints
+#   cargo make update-toolchain     # rustup update + cargo update
+#
+#   ── DATABASE MIGRATIONS ──────────────────────────────────────────────────
+#   cargo make migrate              # run pending migrations (sqlx)
+#   cargo make migrate-revert       # revert last migration (sqlx)
+#
+#   ── WATCH ────────────────────────────────────────────────────────────────
+#   cargo make watch                # recompile on file changes
+#   cargo make watch-run            # recompile + restart on file changes
+#   cargo make watch-test           # re-run tests on file changes
+#   cargo make watch-check          # re-run cargo check on file changes
+#
+#   ── CLEAN ────────────────────────────────────────────────────────────────
+#   cargo make clean                # remove target/
+#   cargo make dist-clean           # remove target/ + Cargo.lock
+#
+#   ── CI ───────────────────────────────────────────────────────────────────
+#   cargo make ci                   # fmt-check → clippy → test
+#   cargo make ci-full              # fmt-check → clippy → test → audit → doc-check
+#
+#   ── DOCKER ───────────────────────────────────────────────────────────────
+#   cargo make docker-build         # docker build -t <APP>:<ENV> .
+#   cargo make docker-run           # docker run -p 8080:8080 --env-file .env
+#
+#   ── STATISTICS ───────────────────────────────────────────────────────────
+#   cargo make stats                # lines-of-code summary
+#   cargo make stats-detail         # per-file lines-of-code
+#   cargo make status               # alias for stats
+#
+#   ── SETUP ────────────────────────────────────────────────────────────────
+#   cargo make install              # install all recommended cargo tools
+#   cargo make version              # print Rust toolchain versions
 # ─────────────────────────────────────────────────────────────────────────────
 
 [config]
-# Do not inherit workspace-level Makefile.toml (stand-alone crate).
 default_to_workspace = false
-# Show a task summary when --list-all-steps is passed.
 skip_core_tasks      = false
-# Minimum cargo-make version required.
 min_version          = "0.37.0"
 
 # ── Project-wide environment variables ───────────────────────────────────────
 
 [env]
-# Application binary name (matches [[bin]] name in Cargo.toml).
 APP = "ucs-fe"
-# Active environment: dev | sit | prod.
-# Override on the command line:  cargo make ENV=prod run
 ENV = { value = "dev", condition = { env_not_set = ["ENV"] } }
-# The default task executed by a bare `cargo make` invocation.
 CARGO_MAKE_DEFAULT_TASK_NAME = "default"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +126,8 @@ dependencies = [
     "install-cargo-audit",
     "install-cargo-tarpaulin",
     "install-cargo-nextest",
+    "install-cargo-udeps",
+    "install-sqlx",
     "install-tokei",
 ]
 
@@ -94,6 +161,16 @@ description = "Install cargo-nextest (faster, richer test runner)."
 command     = "cargo"
 args        = ["install", "cargo-nextest", "--locked"]
 
+[tasks.install-cargo-udeps]
+description = "Install cargo-udeps (detect unused dependencies, requires nightly)."
+command     = "cargo"
+args        = ["install", "cargo-udeps", "--locked"]
+
+[tasks.install-sqlx]
+description = "Install sqlx-cli (database migration management)."
+command     = "cargo"
+args        = ["install", "sqlx-cli", "--locked"]
+
 [tasks.install-tokei]
 description = "Install tokei (lines-of-code statistics)."
 command     = "cargo"
@@ -125,14 +202,19 @@ description = "Alias for `build` — compile debug binary with full debug info."
 alias       = "build"
 
 [tasks.release]
-description = "Compile optimised release binary (stripped, fast)."
+description = "Compile optimised release binary (stripped, fast, locked)."
 command     = "cargo"
-args        = ["build", "--release", "--bin", "${APP}"]
+args        = ["build", "--release", "--bin", "${APP}", "--locked"]
 
 [tasks.build-all]
 description = "Compile ALL targets (bins, examples, tests, benches) in debug mode."
 command     = "cargo"
 args        = ["build", "--all-targets"]
+
+[tasks.release-all]
+description = "Compile ALL targets in release mode (locked)."
+command     = "cargo"
+args        = ["build", "--release", "--all-targets", "--locked"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STATISTICS — project metrics (requires tokei)
@@ -226,7 +308,7 @@ alias       = "clippy"
 [tasks.clippy-fix]
 description = "Run Clippy and auto-apply fixes (deny warnings)."
 command     = "cargo"
-args        = [ "clippy", "--all-targets",  "--fix",  "--allow-dirty", "--allow-staged",  "--", "-D", "warnings" ]
+args        = ["clippy", "--all-targets", "--fix", "--allow-dirty", "--allow-staged", "--", "-D", "warnings"]
 
 [tasks.optimize]
 description = "Auto-fix Clippy suggestions then reformat (mirrors Go `make optimize`)."
@@ -237,9 +319,9 @@ dependencies = ["clippy-fix", "fmt"]
 # ─────────────────────────────────────────────────────────────────────────────
 
 [tasks.test]
-description = "Run all unit and integration tests (mirrors Go `make test`)."
+description = "Run all unit and integration tests (all targets, locked)."
 command     = "cargo"
-args        = ["test", "--all"]
+args        = ["test", "--all-targets", "--locked"]
 
 [tasks.testv]
 description = "Run all tests with output visible (mirrors Go `make testv`)."
@@ -278,9 +360,9 @@ args        = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 [tasks.doc]
-description = "Build rustdoc documentation and open it in the browser."
+description = "Build rustdoc documentation (including private items) and open in browser."
 command     = "cargo"
-args        = ["doc", "--no-deps", "--open"]
+args        = ["doc", "--no-deps", "--open", "--document-private-items"]
 
 [tasks.doc-check]
 description = "Build docs without opening (CI-safe doc lint check)."
@@ -303,6 +385,11 @@ description = "List outdated dependencies (requires cargo-outdated)."
 command     = "cargo"
 args        = ["outdated", "-R"]
 
+[tasks.udeps]
+description = "Detect unused dependencies (requires cargo-udeps + nightly toolchain)."
+command     = "cargo"
+args        = ["+nightly", "udeps", "--all-targets"]
+
 [tasks.update]
 description = "Update Cargo.lock to latest compatible versions (mirrors Go `make update`)."
 command     = "cargo"
@@ -321,6 +408,20 @@ script = [
     "rustup update",
     "cargo update",
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATABASE MIGRATIONS (sqlx)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks.migrate]
+description = "Run pending database migrations (requires sqlx-cli)."
+command     = "sqlx"
+args        = ["migrate", "run"]
+
+[tasks.migrate-revert]
+description = "Revert the last applied database migration (requires sqlx-cli)."
+command     = "sqlx"
+args        = ["migrate", "revert"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WATCH — live-reload development (requires cargo-watch)
@@ -376,17 +477,17 @@ description  = "Extended CI gate: fmt-check → clippy → test → audit → do
 dependencies = ["fmt-check", "clippy", "test", "audit", "doc-check"]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DOCKER / DEPLOY (stubs — fill in as the project grows)
+# DOCKER / DEPLOY
 # ─────────────────────────────────────────────────────────────────────────────
 
 [tasks.docker-build]
-description = "Build Docker image for the service."
+description = "Build Docker image tagged as <APP>:<ENV>."
 script = [
     "docker build -t ${APP}:${ENV} .",
 ]
 
 [tasks.docker-run]
-description = "Run the service inside Docker with the active ENV config."
+description = "Run the service inside Docker with --env-file .env and port 8080 exposed."
 script = [
-    "docker run --rm -e ENV=${ENV} ${APP}:${ENV}",
+    "docker run --rm -p 8080:8080 --env-file .env ${APP}:${ENV}",
 ]

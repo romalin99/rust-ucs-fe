@@ -1,0 +1,10 @@
+edition              = "2024"
+max_width            = 100    # 行宽限制
+chain_width          = 80     # 链式调用换行
+use_small_heuristics = "Max"  # 启用最大启发式规则
+newline_style        = "Unix" # LF换行（跨平台一致）
+fn_args_layout       = "Tall" # 函数参数垂直排列
+array_width          = 60     # 数组换行宽度
+struct_lit_width     = 18     # 结构体字面量换行
+imports_granularity  = "Crate"# 按crate合并imports
+group_imports        = "StdExternalCrate" # 分组：std/外部/内部

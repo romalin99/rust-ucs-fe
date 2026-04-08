@@ -1,0 +1,15 @@
+[build]
+# 使用原生CPU优化（提升10-20%性能）
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+# 使用lld链接器（更快）
+linker    = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# ===== 中国镜像加速 =====
+#[source.crates-io]
+#replace-with = "tuna"
+
+#[source.tuna]
+#registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"

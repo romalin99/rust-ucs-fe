@@ -1,0 +1,8 @@
+# 最大函数复杂度
+cognitive-complexity-threshold = 25
+# 最大函数参数数量
+too-many-arguments-threshold   = 7
+# 最大代码行数
+too-many-lines-threshold       = 100
+# 允许的类型复杂度
+type-complexity-threshold      = 250
