@@ -51,14 +51,14 @@ mod tests {
     #[test]
     fn test_parse_decimal_str() {
         assert_eq!(parse_decimal_str("1.23"), Some(1.23));
-        assert_eq!(parse_decimal_str(""),     None);
-        assert_eq!(parse_decimal_str("abc"),  None);
+        assert_eq!(parse_decimal_str(""), None);
+        assert_eq!(parse_decimal_str("abc"), None);
     }
 
     #[test]
     fn test_format_decimal4() {
-        assert_eq!(format_decimal4(1.23),    "1.2300");
-        assert_eq!(format_decimal4(0.0),     "0.0000");
+        assert_eq!(format_decimal4(1.23), "1.2300");
+        assert_eq!(format_decimal4(0.0), "0.0000");
         assert_eq!(format_decimal4(1.23456), "1.2346");
     }
 }

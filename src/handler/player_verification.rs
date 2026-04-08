@@ -83,12 +83,7 @@ pub async fn get_question_list(
     // ── Dispatch to service ───────────────────────────────────────────────────
     match state
         .verification_svc
-        .get_question_list(
-            &merchant_code,
-            &customer_ip,
-            &params.customer_name,
-            &language,
-        )
+        .get_question_list(&merchant_code, &customer_ip, &params.customer_name, &language)
         .await
     {
         Ok(result) => {
@@ -152,11 +147,7 @@ pub async fn get_question_list(
 
         // ── WpsApiFailed → 500 ───────────────────────────────────────────────
         Err(AppError::WpsApiFailed(ref e)) => {
-            tracing::error!(
-                "wps service unavailable: merchant={} err={}",
-                merchant_code,
-                e
-            );
+            tracing::error!("wps service unavailable: merchant={} err={}", merchant_code, e);
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ucsfe.questions.wps_service_unavailable",
@@ -267,11 +258,7 @@ pub async fn submit_verify_materials(
         ),
 
         Err(AppError::ParseJsonFailed(ref e)) => {
-            tracing::error!(
-                "failed to parse merchant rule: merchant={} err={}",
-                merchant_code,
-                e
-            );
+            tracing::error!("failed to parse merchant rule: merchant={} err={}", merchant_code, e);
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ucsfe.materials.rule_config_invalid",
@@ -293,11 +280,7 @@ pub async fn submit_verify_materials(
         ),
 
         Err(AppError::VerifyPlayerInfoFailed(ref e)) => {
-            tracing::error!(
-                "MCS verification failed: merchant={} err={}",
-                merchant_code,
-                e
-            );
+            tracing::error!("MCS verification failed: merchant={} err={}", merchant_code, e);
             err_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ucsfe.materials.mcs_verify_failed",

@@ -31,9 +31,7 @@ static USS_MAPPING_INIT_COMPLETE: AtomicBool = AtomicBool::new(false);
 static USS_MAPPING_INIT_NOTIFY: OnceCell<Arc<Notify>> = OnceCell::new();
 
 fn uss_mapping_init_notify() -> Arc<Notify> {
-    USS_MAPPING_INIT_NOTIFY
-        .get_or_init(|| Arc::new(Notify::new()))
-        .clone()
+    USS_MAPPING_INIT_NOTIFY.get_or_init(|| Arc::new(Notify::new())).clone()
 }
 
 pub async fn wait_for_uss_mapping_init() {
@@ -175,8 +173,5 @@ pub fn get_uss_mapping_config_sync(field_id: &str, field_name: &str) -> Option<S
 pub async fn get_all_uss_mapping_configs() -> HashMap<String, String> {
     wait_for_uss_mapping_init().await;
     let cache = global_uss_mappings();
-    cache
-        .iter()
-        .map(|entry| (entry.key().clone(), entry.value().clone()))
-        .collect()
+    cache.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect()
 }

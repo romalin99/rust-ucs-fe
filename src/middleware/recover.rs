@@ -59,7 +59,7 @@ where
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         // Extract method and path before moving `req` into the future.
         let method = req.method().clone();
-        let path   = req.uri().path().to_string();
+        let path = req.uri().path().to_string();
 
         let mut inner = self.inner.clone();
 
@@ -67,9 +67,7 @@ where
             // `.catch_unwind()` is from `futures::FutureExt`; it wraps the
             // future in `AssertUnwindSafe` and catches any panic.
             let result: Result<Result<Response<Body>, _>, _> =
-                std::panic::AssertUnwindSafe(inner.call(req))
-                    .catch_unwind()
-                    .await;
+                std::panic::AssertUnwindSafe(inner.call(req)).catch_unwind().await;
 
             match result {
                 Ok(response) => response,

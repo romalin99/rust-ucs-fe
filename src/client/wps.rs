@@ -118,11 +118,8 @@ impl WpsClient {
 
         // e.g. host="http://10.80.0.58:9007"  base_path="wps-core/"
         //   → base_url = "http://10.80.0.58:9007/wps-core"
-        let base_url = format!(
-            "{}/{}",
-            cfg.host.trim_end_matches('/'),
-            cfg.base_path.trim_end_matches('/')
-        );
+        let base_url =
+            format!("{}/{}", cfg.host.trim_end_matches('/'), cfg.base_path.trim_end_matches('/'));
 
         let reset_status_url = format!("{}/members/reset-password-status", base_url);
 
@@ -146,25 +143,19 @@ impl WpsClient {
 
         tracing::info!(url = %url, merchant = merchant_code, "[WPSClient] GetResetPasswordStatus");
 
-        let body = self
-            .do_get_with_retry(&url, merchant_code)
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    merchant = merchant_code,
-                    elapsed_ms = start.elapsed().as_millis(),
-                    error = %e,
-                    "[WPSClient] GetResetPasswordStatus failed"
-                );
-                e
-            })?;
+        let body = self.do_get_with_retry(&url, merchant_code).await.map_err(|e| {
+            tracing::warn!(
+                merchant = merchant_code,
+                elapsed_ms = start.elapsed().as_millis(),
+                error = %e,
+                "[WPSClient] GetResetPasswordStatus failed"
+            );
+            e
+        })?;
 
         let result: ResetPasswordStatusResponse =
             serde_json::from_slice(&body).with_context(|| {
-                format!(
-                    "deserialization failed, raw response: {}",
-                    String::from_utf8_lossy(&body)
-                )
+                format!("deserialization failed, raw response: {}", String::from_utf8_lossy(&body))
             })?;
 
         tracing::info!(

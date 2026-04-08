@@ -81,13 +81,27 @@ impl ProducerConfig {
         };
 
         if let Some(ov) = self.topics.get(topic) {
-            if !ov.compression.is_empty()     { base.compression        = ov.compression.clone(); }
-            if ov.max_message_bytes > 0        { base.max_message_bytes  = ov.max_message_bytes; }
-            if ov.linger_ms > 0                { base.linger_ms          = ov.linger_ms; }
-            if ov.batch_size > 0               { base.batch_size         = ov.batch_size; }
-            if !ov.acks.is_empty()             { base.acks               = ov.acks.clone(); }
-            if ov.retries > 0                  { base.retries            = ov.retries; }
-            if ov.retry_backoff_ms > 0         { base.retry_backoff_ms   = ov.retry_backoff_ms; }
+            if !ov.compression.is_empty() {
+                base.compression = ov.compression.clone();
+            }
+            if ov.max_message_bytes > 0 {
+                base.max_message_bytes = ov.max_message_bytes;
+            }
+            if ov.linger_ms > 0 {
+                base.linger_ms = ov.linger_ms;
+            }
+            if ov.batch_size > 0 {
+                base.batch_size = ov.batch_size;
+            }
+            if !ov.acks.is_empty() {
+                base.acks = ov.acks.clone();
+            }
+            if ov.retries > 0 {
+                base.retries = ov.retries;
+            }
+            if ov.retry_backoff_ms > 0 {
+                base.retry_backoff_ms = ov.retry_backoff_ms;
+            }
         }
         base
     }
@@ -188,23 +202,33 @@ impl ConsumerConfig {
     /// Mirrors Go's `ConsumerConfig.EffectiveTopicConsumerConfig`.
     pub fn effective_topic_config(&self, topic: &str) -> ConsumerTopicConfig {
         let mut base = ConsumerTopicConfig {
-            group_id:         self.group_id.clone(),
+            group_id: self.group_id.clone(),
             auto_offset_reset: normalize_offset_reset(&self.auto_offset_reset),
-            fetch_min_bytes:   self.fetch_min_bytes(),
+            fetch_min_bytes: self.fetch_min_bytes(),
             fetch_max_wait_ms: self.fetch_max_wait_ms(),
-            concurrency:       self.concurrency(),
+            concurrency: self.concurrency(),
             ..Default::default()
         };
 
         if let Some(ov) = self.topics.get(topic) {
-            if !ov.group_id.is_empty()           { base.group_id           = ov.group_id.clone(); }
-            if !ov.auto_offset_reset.is_empty()  {
+            if !ov.group_id.is_empty() {
+                base.group_id = ov.group_id.clone();
+            }
+            if !ov.auto_offset_reset.is_empty() {
                 base.auto_offset_reset = normalize_offset_reset(&ov.auto_offset_reset);
             }
-            if ov.fetch_min_bytes > 0            { base.fetch_min_bytes    = ov.fetch_min_bytes; }
-            if ov.fetch_max_wait_ms > 0          { base.fetch_max_wait_ms  = ov.fetch_max_wait_ms; }
-            if ov.concurrency > 0               { base.concurrency        = ov.concurrency; }
-            if ov.auto_commit_interval_ms > 0    { base.auto_commit_interval_ms = ov.auto_commit_interval_ms; }
+            if ov.fetch_min_bytes > 0 {
+                base.fetch_min_bytes = ov.fetch_min_bytes;
+            }
+            if ov.fetch_max_wait_ms > 0 {
+                base.fetch_max_wait_ms = ov.fetch_max_wait_ms;
+            }
+            if ov.concurrency > 0 {
+                base.concurrency = ov.concurrency;
+            }
+            if ov.auto_commit_interval_ms > 0 {
+                base.auto_commit_interval_ms = ov.auto_commit_interval_ms;
+            }
         }
         base
     }
@@ -278,36 +302,36 @@ fn normalize_offset_reset(v: &str) -> String {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Mirrors Go's `TopicBiPromotionRank`.
-pub const TOPIC_BI_PROMOTION_RANK:            &str = "bi-rank-promotion-event";
+pub const TOPIC_BI_PROMOTION_RANK: &str = "bi-rank-promotion-event";
 /// Mirrors Go's `TopicRankEvent`.
-pub const TOPIC_RANK_EVENT:                   &str = "rank-event";
+pub const TOPIC_RANK_EVENT: &str = "rank-event";
 /// Mirrors Go's `TopicCohortInitializationEvent` — new user registration push.
-pub const TOPIC_COHORT_INITIALIZATION_EVENT:  &str = "cohort-initialization-event";
+pub const TOPIC_COHORT_INITIALIZATION_EVENT: &str = "cohort-initialization-event";
 /// Mirrors Go's `TopicTaskUpdateEvent` — task completion.
-pub const TOPIC_TASK_UPDATE_EVENT:            &str = "task-update-event";
+pub const TOPIC_TASK_UPDATE_EVENT: &str = "task-update-event";
 /// Mirrors Go's `TopicPropEvent` — send prop.
-pub const TOPIC_PROP_EVENT:                   &str = "prop-event";
+pub const TOPIC_PROP_EVENT: &str = "prop-event";
 /// Mirrors Go's `TopicPurchaseEvent`.
-pub const TOPIC_PURCHASE_EVENT:               &str = "purchase-event";
+pub const TOPIC_PURCHASE_EVENT: &str = "purchase-event";
 /// Mirrors Go's `TopicTaskProgressesEvent` — task progress.
-pub const TOPIC_TASK_PROGRESSES_EVENT:        &str = "task-progresses-event";
+pub const TOPIC_TASK_PROGRESSES_EVENT: &str = "task-progresses-event";
 
 /// Mirrors Go's `TopicUcsFe`.
-pub const TOPIC_UCS_FE:                       &str = "tcg-ucs-fe";
+pub const TOPIC_UCS_FE: &str = "tcg-ucs-fe";
 /// Mirrors Go's `TopicUcsFeEvents`.
-pub const TOPIC_UCS_FE_EVENTS:                &str = "ucs-fe-events";
+pub const TOPIC_UCS_FE_EVENTS: &str = "ucs-fe-events";
 /// Mirrors Go's `TopicMcsSuccessPlayerDeposit`.
-pub const TOPIC_MCS_SUCCESS_PLAYER_DEPOSIT:   &str = "mcs_success_player_deposit";
+pub const TOPIC_MCS_SUCCESS_PLAYER_DEPOSIT: &str = "mcs_success_player_deposit";
 
 /// Payload for [`TOPIC_TASK_UPDATE_EVENT`].
 ///
 /// Mirrors Go's `TaskUpdate`.
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct TaskUpdate {
-    pub message:                String,
-    pub task_type:              i64,
-    pub task_id:                i64,
-    pub task_item_id:           i64,
+    pub message: String,
+    pub task_type: i64,
+    pub task_id: i64,
+    pub task_item_id: i64,
     pub task_item_progresses_id: i64,
 }
 
@@ -316,11 +340,11 @@ pub struct TaskUpdate {
 /// Mirrors Go's `SendProp`.
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct SendProp {
-    pub send_user_id:    i64,
+    pub send_user_id: i64,
     pub receive_user_id: i64,
-    pub prop_id:         i64,
+    pub prop_id: i64,
     /// 0=none 1=line 2=parabola 3=spiral
-    pub track_type:      i64,
+    pub track_type: i64,
 }
 
 /// Payload for [`TOPIC_PURCHASE_EVENT`] error cases.
@@ -329,8 +353,8 @@ pub struct SendProp {
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct BuyErrorInfo {
     pub purchase_key: String,
-    pub price:        f64,
-    pub coins:        i64,
+    pub price: f64,
+    pub coins: i64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,11 +378,11 @@ pub enum KafkaError {
 /// Kafka message record (simplified equivalent of `kgo.Record`).
 #[derive(Debug, Clone)]
 pub struct Record {
-    pub topic:     String,
-    pub key:       Vec<u8>,
-    pub value:     Vec<u8>,
+    pub topic: String,
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
     pub partition: i32,
-    pub offset:    i64,
+    pub offset: i64,
 }
 
 /// Kafka producer stub.
@@ -403,7 +427,12 @@ impl Producer {
     }
 
     /// Produce a message to an explicit topic.
-    pub async fn produce_to(&self, topic: &str, key: &[u8], value: &[u8]) -> Result<(), KafkaError> {
+    pub async fn produce_to(
+        &self,
+        topic: &str,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), KafkaError> {
         tracing::debug!(
             topic,
             key_len = key.len(),
@@ -484,16 +513,10 @@ impl KafkaClients {
     ///
     /// Mirrors Go's `Config.InitProducer()` + `Config.InitConsumer()`.
     pub fn init(cfg: &KafkaConfig) -> Self {
-        let producer = if !cfg.producer.brokers.is_empty() {
-            Producer::new(&cfg.producer)
-        } else {
-            None
-        };
-        let consumer = if !cfg.consumer.brokers.is_empty() {
-            Consumer::new(&cfg.consumer)
-        } else {
-            None
-        };
+        let producer =
+            if !cfg.producer.brokers.is_empty() { Producer::new(&cfg.producer) } else { None };
+        let consumer =
+            if !cfg.consumer.brokers.is_empty() { Consumer::new(&cfg.consumer) } else { None };
         Self { producer, consumer }
     }
 }

@@ -20,7 +20,9 @@ pub struct SuccessResp {
 }
 
 impl SuccessResp {
-    pub fn ok() -> Self { Self { success: true } }
+    pub fn ok() -> Self {
+        Self { success: true }
+    }
 }
 
 // ── Base / generic responses ──────────────────────────────────────────────────
@@ -30,12 +32,12 @@ impl SuccessResp {
 #[derive(Debug, Serialize)]
 pub struct ApiBaseMessageResp {
     pub success: bool,
-    #[serde(rename = "value",     skip_serializing_if = "Option::is_none")]
-    pub value:      Option<serde_json::Value>,
+    #[serde(rename = "value", skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
     #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
-    #[serde(rename = "message",   skip_serializing_if = "Option::is_none")]
-    pub message:    Option<String>,
+    #[serde(rename = "message", skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Login/auth response with raw bytes payload.
@@ -54,10 +56,10 @@ pub struct LoginWithInfoResp {
 #[derive(Debug, Serialize)]
 pub struct BaseResponse {
     pub success: bool,
-    #[serde(rename = "value",     skip_serializing_if = "Option::is_none")]
-    pub value:      Option<serde_json::Value>,
-    #[serde(rename = "message",   skip_serializing_if = "Option::is_none")]
-    pub message:    Option<String>,
+    #[serde(rename = "value", skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    #[serde(rename = "message", skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
 }
@@ -68,12 +70,22 @@ pub struct BaseResponse {
 pub struct BaseResponseT<T: Serialize> {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub value:   Option<T>,
+    pub value: Option<T>,
 }
 
 impl<T: Serialize> BaseResponseT<T> {
-    pub fn ok(value: T) -> Self { Self { success: true,  value: Some(value) } }
-    pub fn fail()      -> Self { Self { success: false, value: None } }
+    pub fn ok(value: T) -> Self {
+        Self {
+            success: true,
+            value: Some(value),
+        }
+    }
+    pub fn fail() -> Self {
+        Self {
+            success: false,
+            value: None,
+        }
+    }
 }
 
 // ── Domain response types ─────────────────────────────────────────────────────
@@ -93,18 +105,18 @@ pub struct MerchantRuleResponse {
 /// Mirrors Go's `resp.CommonResponse`.
 #[derive(Debug, Serialize)]
 pub struct CommonResponse {
-    pub data:    serde_json::Value,
+    pub data: serde_json::Value,
     pub message: String,
-    pub code:    i32,
+    pub code: i32,
 }
 
 /// Builds a success envelope wrapping a `CommonResponse`.
 /// Mirrors Go's `resp.Success(data)`.
 pub fn success(data: impl Serialize) -> BaseResponseT<CommonResponse> {
     BaseResponseT::ok(CommonResponse {
-        code:    0,
+        code: 0,
         message: "success".to_string(),
-        data:    serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+        data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
     })
 }
 
@@ -116,7 +128,7 @@ pub fn fail(code: i32, msg: impl Into<String>) -> BaseResponseT<CommonResponse> 
         value: Some(CommonResponse {
             code,
             message: msg.into(),
-            data:    serde_json::Value::Null,
+            data: serde_json::Value::Null,
         }),
     }
 }
@@ -127,16 +139,20 @@ pub fn fail(code: i32, msg: impl Into<String>) -> BaseResponseT<CommonResponse> 
 /// Mirrors Go's `resp.ErrResponse`.
 #[derive(Debug, Serialize)]
 pub struct ErrResponse {
-    pub success:    bool,
+    pub success: bool,
     #[serde(rename = "errorCode")]
     pub error_code: String,
-    pub message:    String,
+    pub message: String,
 }
 
 impl ErrResponse {
     /// Mirrors Go's `resp.NewErrResponse(errorCode, message)`.
     pub fn new(error_code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { success: false, error_code: error_code.into(), message: message.into() }
+        Self {
+            success: false,
+            error_code: error_code.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -144,7 +160,7 @@ impl ErrResponse {
 /// Mirrors Go's `resp.ErrMissingParam`.
 #[derive(Debug, Serialize)]
 pub struct ErrMissingParam {
-    pub code:    String,
+    pub code: String,
     pub message: String,
 }
 
@@ -152,7 +168,7 @@ impl ErrMissingParam {
     /// Mirrors Go's `resp.NewErrMissingParam(field)`.
     pub fn new(field: &str) -> Self {
         Self {
-            code:    "MISSING_PARAM".to_string(),
+            code: "MISSING_PARAM".to_string(),
             message: format!("{field} is required"),
         }
     }
@@ -162,7 +178,7 @@ impl ErrMissingParam {
 /// Mirrors Go's `resp.ErrNotFound`.
 #[derive(Debug, Serialize)]
 pub struct ErrNotFound {
-    pub code:    String,
+    pub code: String,
     pub message: String,
 }
 
@@ -170,7 +186,7 @@ impl ErrNotFound {
     /// Mirrors Go's `resp.NewErrNotFound(resource)`.
     pub fn new(resource: &str) -> Self {
         Self {
-            code:    "NOT_FOUND".to_string(),
+            code: "NOT_FOUND".to_string(),
             message: format!("{resource} not found"),
         }
     }
@@ -180,7 +196,7 @@ impl ErrNotFound {
 /// Mirrors Go's `resp.ErrInternalServer`.
 #[derive(Debug, Serialize)]
 pub struct ErrInternalServer {
-    pub code:    String,
+    pub code: String,
     pub message: String,
 }
 
@@ -188,7 +204,7 @@ impl ErrInternalServer {
     /// Mirrors Go's `resp.NewErrInternalServer(msg)`.
     pub fn new(msg: impl Into<String>) -> Self {
         Self {
-            code:    "INTERNAL_ERROR".to_string(),
+            code: "INTERNAL_ERROR".to_string(),
             message: msg.into(),
         }
     }
@@ -209,7 +225,7 @@ pub struct SubmitVerifyDataScoreNotChecked {
 #[derive(Debug, Serialize)]
 pub struct SubmitVerifyDataScoreChecked {
     #[serde(rename = "bindType")]
-    pub bind_type:        String,
+    pub bind_type: String,
     #[serde(rename = "oneTimePassword")]
     pub one_time_password: String,
 }
@@ -225,8 +241,8 @@ pub struct SubmitVerifyResponseScoreNotChecked {
 #[derive(Debug, Serialize)]
 pub struct SubmitVerifyInnerNotChecked {
     pub message: String,
-    pub code:    i32,
-    pub data:    SubmitVerifyDataScoreNotChecked,
+    pub code: i32,
+    pub data: SubmitVerifyDataScoreNotChecked,
 }
 
 /// Top-level envelope for score-checked result.
@@ -239,9 +255,9 @@ pub struct SubmitVerifyResponseScoreChecked {
 
 #[derive(Debug, Serialize)]
 pub struct SubmitVerifyInnerChecked {
-    pub data:    SubmitVerifyDataScoreChecked,
+    pub data: SubmitVerifyDataScoreChecked,
     pub message: String,
-    pub code:    i32,
+    pub code: i32,
 }
 
 // ── Flat submit data (used directly by handlers) ──────────────────────────────
@@ -253,8 +269,8 @@ pub struct SubmitVerifyInnerChecked {
 pub struct SubmitVerifyData {
     #[serde(rename = "scoreChecked", skip_serializing_if = "std::ops::Not::not")]
     pub score_checked: bool,
-    #[serde(rename = "bindType",        skip_serializing_if = "Option::is_none")]
-    pub bind_type:      Option<String>,
+    #[serde(rename = "bindType", skip_serializing_if = "Option::is_none")]
+    pub bind_type: Option<String>,
     #[serde(rename = "oneTimePassword", skip_serializing_if = "Option::is_none")]
     pub one_time_password: Option<String>,
 }

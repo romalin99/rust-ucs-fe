@@ -8,11 +8,11 @@
 // ── Context / span key names ──────────────────────────────────────────────────
 
 /// Request-scoped user ID key (tracing span / request extensions).
-pub const CTX_USER_ID:   &str = "user_id";
+pub const CTX_USER_ID: &str = "user_id";
 /// Request-scoped trace ID key.
-pub const CTX_TRACE_ID:  &str = "trace_id";
+pub const CTX_TRACE_ID: &str = "trace_id";
 /// Request-scoped service name key.
-pub const CTX_SERVICE:   &str = "service";
+pub const CTX_SERVICE: &str = "service";
 /// Request-scoped client IP key.
 pub const CTX_CLIENT_IP: &str = "client_ip";
 
@@ -21,14 +21,14 @@ pub const CTX_CLIENT_IP: &str = "client_ip";
 /// Maximum number of items processed in a single batch.
 pub const MAX_BATCH_SIZE: usize = 500;
 /// Maximum version counter value.
-pub const MAX_VERSION:    i64   = 10_000_000;
+pub const MAX_VERSION: i64 = 10_000_000;
 /// Expected number of items in specific validation structures.
-pub const EXPECTED_SIZE:  usize = 16;
+pub const EXPECTED_SIZE: usize = 16;
 
 // ── Sort direction strings ────────────────────────────────────────────────────
 
 /// Ascending sort direction.
-pub const ASC:  &str = "ASC";
+pub const ASC: &str = "ASC";
 /// Descending sort direction.
 pub const DESC: &str = "DESC";
 

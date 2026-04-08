@@ -343,9 +343,7 @@ impl PlayerVerificationService {
         let token_resp = token_result.map_err(|e| AppError::PasswordResetFailed(e.to_string()))?;
         if !token_resp.success {
             tracing::warn!(customer_name = %customer_name, "USS GeneratePasswordResetToken returned failure");
-            return Err(AppError::PasswordResetFailed(
-                "USS returned failure".to_string(),
-            ));
+            return Err(AppError::PasswordResetFailed("USS returned failure".to_string()));
         }
         let one_time_passwd = token_resp.value.clone();
 
@@ -512,10 +510,7 @@ impl PlayerVerificationService {
         let raw = rule.questions_json.as_deref().unwrap_or("");
         if raw.is_empty() {
             tracing::warn!(merchant_code, "questions field is empty");
-            return Err(AppError::ParseJsonFailed(format!(
-                "merchantCode={}",
-                merchant_code
-            )));
+            return Err(AppError::ParseJsonFailed(format!("merchantCode={}", merchant_code)));
         }
 
         let all: std::collections::HashMap<String, Question> =
@@ -532,17 +527,11 @@ impl PlayerVerificationService {
                 continue;
             }
             let dropdown = if q.field_attribute == "DD" {
-                dd_map
-                    .as_ref()
-                    .and_then(|m| m.get(q.field_id.as_str()))
-                    .cloned()
+                dd_map.as_ref().and_then(|m| m.get(q.field_id.as_str())).cloned()
             } else {
                 None
             };
-            let field_name = translations
-                .get(&q.field_id)
-                .cloned()
-                .unwrap_or(q.field_name);
+            let field_name = translations.get(&q.field_id).cloned().unwrap_or(q.field_name);
             result.push(QuestionInfo {
                 field_id: q.field_id,
                 field_name,
@@ -554,11 +543,7 @@ impl PlayerVerificationService {
 
         result.sort_by(|a, b| a.field_id.cmp(&b.field_id));
 
-        tracing::info!(
-            merchant_code,
-            valid_questions = result.len(),
-            "getValidQuestionInfos done"
-        );
+        tracing::info!(merchant_code, valid_questions = result.len(), "getValidQuestionInfos done");
 
         Ok(result)
     }
@@ -802,54 +787,18 @@ fn calculate_score_for_financial_history(
     let empty_score = rule_cfg.empty_score;
 
     let score_fields: &[(&str, i32)] = &[
-        (
-            "BANK_ACCOUNT",
-            resp.value.verify_player_finance_info.bc_number,
-        ),
-        (
-            "CARD_HOLDER_NAME",
-            resp.value.verify_player_finance_info.bc_holder_name,
-        ),
-        (
-            "E_WALLET_ACCOUNT",
-            resp.value.verify_player_finance_info.ew_account,
-        ),
-        (
-            "E_WALLET_NAME",
-            resp.value.verify_player_finance_info.ew_holder_name,
-        ),
-        (
-            "VIRTUAL_WALLET_ADDRESS",
-            resp.value.verify_player_finance_info.vw_address,
-        ),
-        (
-            "VIRTUAL_WALLET_NAME",
-            resp.value.verify_player_finance_info.vw_holder_name,
-        ),
-        (
-            "LAST_DEPOSIT_AMOUNT",
-            resp.value.verify_player_history_info.last_deposit_amount,
-        ),
-        (
-            "LAST_DEPOSIT_TIME",
-            resp.value.verify_player_history_info.last_deposit_time,
-        ),
-        (
-            "LAST_DEPOSIT_METHOD",
-            resp.value.verify_player_history_info.last_deposit_method,
-        ),
-        (
-            "LAST_WITHDRAWAL_AMOUNT",
-            resp.value.verify_player_history_info.last_withdraw_amount,
-        ),
-        (
-            "LAST_WITHDRAWAL_TIME",
-            resp.value.verify_player_history_info.last_withdraw_time,
-        ),
-        (
-            "LAST_WITHDRAWAL_METHOD",
-            resp.value.verify_player_history_info.last_withdraw_method,
-        ),
+        ("BANK_ACCOUNT", resp.value.verify_player_finance_info.bc_number),
+        ("CARD_HOLDER_NAME", resp.value.verify_player_finance_info.bc_holder_name),
+        ("E_WALLET_ACCOUNT", resp.value.verify_player_finance_info.ew_account),
+        ("E_WALLET_NAME", resp.value.verify_player_finance_info.ew_holder_name),
+        ("VIRTUAL_WALLET_ADDRESS", resp.value.verify_player_finance_info.vw_address),
+        ("VIRTUAL_WALLET_NAME", resp.value.verify_player_finance_info.vw_holder_name),
+        ("LAST_DEPOSIT_AMOUNT", resp.value.verify_player_history_info.last_deposit_amount),
+        ("LAST_DEPOSIT_TIME", resp.value.verify_player_history_info.last_deposit_time),
+        ("LAST_DEPOSIT_METHOD", resp.value.verify_player_history_info.last_deposit_method),
+        ("LAST_WITHDRAWAL_AMOUNT", resp.value.verify_player_history_info.last_withdraw_amount),
+        ("LAST_WITHDRAWAL_TIME", resp.value.verify_player_history_info.last_withdraw_time),
+        ("LAST_WITHDRAWAL_METHOD", resp.value.verify_player_history_info.last_withdraw_method),
     ];
 
     for (field_id, raw_score) in score_fields {

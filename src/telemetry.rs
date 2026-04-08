@@ -98,10 +98,7 @@ fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
     }
 
     let cap_bytes = (cfg.buffer_size.max(1) as usize) * 1024 * 1024;
-    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(
-        cap_bytes,
-        io::stdout(),
-    )));
+    let inner = Arc::new(Mutex::new(BufWriter::with_capacity(cap_bytes, io::stdout())));
 
     LOG_BUF.set(inner.clone()).ok();
 
@@ -211,27 +208,18 @@ fn init_behavior_writer(cfg: &LogConfig) -> Option<BehaviorFileWriter> {
     };
 
     if let Err(e) = std::fs::create_dir_all(&behavior_dir) {
-        eprintln!(
-            "Failed to create behavior log directory {}: {}",
-            behavior_dir, e
-        );
+        eprintln!("Failed to create behavior log directory {}: {}", behavior_dir, e);
         return None;
     }
 
     let behavior_file_path = format!("{}/{}-behavior.log", behavior_dir, cfg.name);
     eprintln!("Log behavior file path: {}", behavior_file_path);
 
-    let file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&behavior_file_path)
+    let file = match std::fs::OpenOptions::new().create(true).append(true).open(&behavior_file_path)
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "Failed to open behavior log file {}: {}",
-                behavior_file_path, e
-            );
+            eprintln!("Failed to open behavior log file {}: {}", behavior_file_path, e);
             return None;
         }
     };
@@ -308,12 +296,10 @@ impl Visit for FieldCollector {
         self.0.insert(field.name().to_owned(), value.into());
     }
     fn record_i128(&mut self, field: &Field, value: i128) {
-        self.0
-            .insert(field.name().to_owned(), value.to_string().into());
+        self.0.insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_u128(&mut self, field: &Field, value: u128) {
-        self.0
-            .insert(field.name().to_owned(), value.to_string().into());
+        self.0.insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
         self.0.insert(field.name().to_owned(), value.into());
@@ -322,12 +308,10 @@ impl Visit for FieldCollector {
         self.0.insert(field.name().to_owned(), value.into());
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        self.0
-            .insert(field.name().to_owned(), value.to_string().into());
+        self.0.insert(field.name().to_owned(), value.to_string().into());
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.0
-            .insert(field.name().to_owned(), format!("{value:?}").into());
+        self.0.insert(field.name().to_owned(), format!("{value:?}").into());
     }
 }
 
@@ -361,10 +345,7 @@ where
         event.record(&mut collector);
 
         // Promote "message" to top-level.
-        let message = collector
-            .0
-            .remove("message")
-            .unwrap_or(Value::String(String::new()));
+        let message = collector.0.remove("message").unwrap_or(Value::String(String::new()));
 
         // "file_line" = "src/foo.rs:42" (same shape as Go's ShortCallerEncoder)
         let mut file_line = String::with_capacity(48);
@@ -444,10 +425,7 @@ where
             .unwrap_or_default();
 
         // Only the base filename (mirrors Go's `path.Base(ent.Caller.File)`).
-        let file = meta
-            .file()
-            .map(|f| f.rsplit('/').next().unwrap_or(f))
-            .unwrap_or("<unknown>");
+        let file = meta.file().map(|f| f.rsplit('/').next().unwrap_or(f)).unwrap_or("<unknown>");
         let line = meta.line().unwrap_or(0);
 
         // Timestamp in Go's default layout `2006-01-02 15:04:05.000`.

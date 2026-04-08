@@ -7,7 +7,6 @@
 /// In Go, database/sql uses `sql.NullString`, `sql.NullInt64`, etc.  In Rust
 /// the direct equivalent is `Option<T>`.  The helpers below mirror the Go
 /// null-unwrap pattern so call-sites look and read identically.
-
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 /// Parse a string to `i64`, returning `default` on failure.
@@ -203,11 +202,7 @@ pub fn from_opt_datetime(v: Option<NaiveDateTime>) -> String {
 ///
 /// Mirrors Go's `conv.NewNullTime(t)`.
 pub fn new_null_datetime(t: NaiveDateTime) -> Option<NaiveDateTime> {
-    if t == DateTime::<Utc>::UNIX_EPOCH.naive_utc() {
-        None
-    } else {
-        Some(t)
-    }
+    if t == DateTime::<Utc>::UNIX_EPOCH.naive_utc() { None } else { Some(t) }
 }
 
 #[cfg(test)]
@@ -216,11 +211,11 @@ mod tests {
 
     #[test]
     fn test_string_to_i64_default() {
-        assert_eq!(string_to_i64_default("42",  0),  42);
-        assert_eq!(string_to_i64_default("",    0),  0);
-        assert_eq!(string_to_i64_default("x",  -1), -1);
-        assert_eq!(string_to_i64_default(" 7 ", 0),  7);
-        assert_eq!(string_to_i64_default("-5",  0), -5);
+        assert_eq!(string_to_i64_default("42", 0), 42);
+        assert_eq!(string_to_i64_default("", 0), 0);
+        assert_eq!(string_to_i64_default("x", -1), -1);
+        assert_eq!(string_to_i64_default(" 7 ", 0), 7);
+        assert_eq!(string_to_i64_default("-5", 0), -5);
     }
 
     #[test]

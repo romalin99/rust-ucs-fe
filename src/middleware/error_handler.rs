@@ -11,11 +11,11 @@
 /// (e.g. timeout, body-limit exceeded) and converts them into a consistent
 /// JSON envelope so clients never receive a raw 5xx with no body.
 use axum::{
+    Json,
     body::Body,
     http::{Request, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
-    Json,
 };
 use serde_json::json;
 use tracing::{info, warn};
@@ -82,16 +82,18 @@ pub async fn error_handler(req: Request<Body>, next: Next) -> Response<Body> {
 /// Mirrors Go's `ErrorHandler` switch cases.
 fn map_status(status: StatusCode) -> (&'static str, &'static str) {
     match status {
-        StatusCode::BAD_REQUEST          => ("ucs-fe.non.bad_request",           "bad request"),
-        StatusCode::UNAUTHORIZED         => ("ucs-fe.non.unauthorized",           "unauthorized"),
-        StatusCode::FORBIDDEN            => ("ucs-fe.non.forbidden",              "forbidden"),
-        StatusCode::NOT_FOUND            => ("ucs-fe.non.not_found",              "resource not found"),
-        StatusCode::METHOD_NOT_ALLOWED   => ("ucs-fe.non.method_not_allowed",     "method not allowed"),
-        StatusCode::REQUEST_TIMEOUT      => ("ucs-fe.non.request_timeout",        "request timed out"),
-        StatusCode::TOO_MANY_REQUESTS    => ("ucs-fe.non.too_many_requests",      "rate limit exceeded"),
-        StatusCode::INTERNAL_SERVER_ERROR=> ("ucs-fe.non.unknown_err",            "internal server error"),
-        StatusCode::SERVICE_UNAVAILABLE  => ("ucs-fe.non.service_unavailable",    "service unavailable"),
-        StatusCode::GATEWAY_TIMEOUT      => ("ucs-fe.non.gateway_timeout",        "gateway timeout"),
-        _                                => ("ucs-fe.non.unknown_err",            "unknown error"),
+        StatusCode::BAD_REQUEST => ("ucs-fe.non.bad_request", "bad request"),
+        StatusCode::UNAUTHORIZED => ("ucs-fe.non.unauthorized", "unauthorized"),
+        StatusCode::FORBIDDEN => ("ucs-fe.non.forbidden", "forbidden"),
+        StatusCode::NOT_FOUND => ("ucs-fe.non.not_found", "resource not found"),
+        StatusCode::METHOD_NOT_ALLOWED => ("ucs-fe.non.method_not_allowed", "method not allowed"),
+        StatusCode::REQUEST_TIMEOUT => ("ucs-fe.non.request_timeout", "request timed out"),
+        StatusCode::TOO_MANY_REQUESTS => ("ucs-fe.non.too_many_requests", "rate limit exceeded"),
+        StatusCode::INTERNAL_SERVER_ERROR => ("ucs-fe.non.unknown_err", "internal server error"),
+        StatusCode::SERVICE_UNAVAILABLE => {
+            ("ucs-fe.non.service_unavailable", "service unavailable")
+        }
+        StatusCode::GATEWAY_TIMEOUT => ("ucs-fe.non.gateway_timeout", "gateway timeout"),
+        _ => ("ucs-fe.non.unknown_err", "unknown error"),
     }
 }

@@ -41,10 +41,7 @@ pub async fn init_redis_multi_db(cfg_addr: &[String], cfg_password: &str, dbs: &
         return;
     }
     let mut map: Vec<(i32, RedisInstance)> = Vec::with_capacity(dbs.len());
-    let addr = cfg_addr
-        .first()
-        .map(String::as_str)
-        .unwrap_or("127.0.0.1:6379");
+    let addr = cfg_addr.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
     for db_entry in dbs {
         let url = if cfg_password.is_empty() {
             format!("redis://{}/{}", addr, db_entry.db)
@@ -133,11 +130,7 @@ pub fn start_oracle_pool_monitor(
     desc: &'static str,
 ) -> tokio::sync::watch::Sender<bool> {
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
-    let secs = if interval_secs == 0 {
-        60
-    } else {
-        interval_secs
-    };
+    let secs = if interval_secs == 0 { 60 } else { interval_secs };
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(secs));
@@ -283,20 +276,12 @@ impl AppInfra {
 
         // ── Redis ─────────────────────────────────────────────────────────────
         tracing::info!("Connecting to Redis");
-        let redis_addr = cfg
-            .redis
-            .addr
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("127.0.0.1:6379");
+        let redis_addr = cfg.redis.addr.first().map(|s| s.as_str()).unwrap_or("127.0.0.1:6379");
 
         let redis_url = if cfg.redis.password.is_empty() {
             format!("redis://{}/{}", redis_addr, cfg.redis.db)
         } else {
-            format!(
-                "redis://:{}@{}/{}",
-                cfg.redis.password, redis_addr, cfg.redis.db
-            )
+            format!("redis://:{}@{}/{}", cfg.redis.password, redis_addr, cfg.redis.db)
         };
 
         let redis_client = redis::Client::open(redis_url)
@@ -312,10 +297,8 @@ impl AppInfra {
         let wps = Arc::new(WpsClient::new(&cfg.wps_service));
 
         // ── Repositories (all share the single oracle_pool) ─────────────────
-        let merchant_repo = Arc::new(MerchantRuleRepository::new(
-            oracle_pool.clone(),
-            cfg.oracle.read_timeout,
-        ));
+        let merchant_repo =
+            Arc::new(MerchantRuleRepository::new(oracle_pool.clone(), cfg.oracle.read_timeout));
         let validation_repo = Arc::new(ValidationRecordRepository::new(
             oracle_pool.clone(),
             cfg.oracle.read_timeout,

@@ -107,9 +107,7 @@ impl FlexTime {
     /// Returns `"YYYY-MM-DD"` or `""` if the value is null/zero.
     /// Mirrors Go's `FlexTime.FormatDate()`.
     pub fn format_date(&self) -> String {
-        self.0
-            .map(|dt| dt.format("%Y-%m-%d").to_string())
-            .unwrap_or_default()
+        self.0.map(|dt| dt.format("%Y-%m-%d").to_string()).unwrap_or_default()
     }
 }
 
@@ -150,11 +148,7 @@ pub struct NullString {
 
 impl serde::Serialize for NullString {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid {
-            serializer.serialize_str(&self.val)
-        } else {
-            serializer.serialize_none()
-        }
+        if self.valid { serializer.serialize_str(&self.val) } else { serializer.serialize_none() }
     }
 }
 
@@ -248,11 +242,7 @@ pub struct NullInt32 {
 
 impl serde::Serialize for NullInt32 {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid {
-            serializer.serialize_i32(self.val)
-        } else {
-            serializer.serialize_none()
-        }
+        if self.valid { serializer.serialize_i32(self.val) } else { serializer.serialize_none() }
     }
 }
 
@@ -291,11 +281,7 @@ pub struct NullBool {
 
 impl serde::Serialize for NullBool {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.valid {
-            serializer.serialize_bool(self.val)
-        } else {
-            serializer.serialize_none()
-        }
+        if self.valid { serializer.serialize_bool(self.val) } else { serializer.serialize_none() }
     }
 }
 
@@ -540,11 +526,7 @@ pub struct CustomerAdditionalInfo {
     /// JSON may be `true`, `false`, or **`null`** — null → false.
     /// Uses a custom deserializer because `#[serde(default)]` only applies when
     /// the key is *absent*, not when the key is present with an explicit `null`.
-    #[serde(
-        rename = "emailVerification",
-        deserialize_with = "bool_from_null_or_bool",
-        default
-    )]
+    #[serde(rename = "emailVerification", deserialize_with = "bool_from_null_or_bool", default)]
     pub email_verification: bool,
 }
 
@@ -618,11 +600,7 @@ pub struct CustomerValue {
     pub merchant: Merchant,
     // `null_as_default` handles both absent key AND explicit `null` in JSON.
     // (`#[serde(default)]` alone only handles the absent-key case.)
-    #[serde(
-        rename = "customerAdditionalInfo",
-        default,
-        deserialize_with = "null_as_default"
-    )]
+    #[serde(rename = "customerAdditionalInfo", default, deserialize_with = "null_as_default")]
     pub customer_additional_info: CustomerAdditionalInfo,
 }
 
@@ -766,17 +744,9 @@ pub struct CustomerPersonalInfoValue {
     pub source_of_income: NullInt32,
     #[serde(rename = "usState", default)]
     pub us_state: NullInt32,
-    #[serde(
-        rename = "isEmailVerification",
-        deserialize_with = "bool_from_null_or_bool",
-        default
-    )]
+    #[serde(rename = "isEmailVerification", deserialize_with = "bool_from_null_or_bool", default)]
     pub is_email_verification: bool,
-    #[serde(
-        rename = "idVerification",
-        deserialize_with = "bool_from_null_or_bool",
-        default
-    )]
+    #[serde(rename = "idVerification", deserialize_with = "bool_from_null_or_bool", default)]
     pub id_verification: bool,
     #[serde(rename = "isOfficialAppLogin", default)]
     pub is_official_app_login: NullBool,
@@ -824,11 +794,7 @@ impl UssClient {
         let base_url = cfg.host.trim_end_matches('/').to_string();
         let base_path = {
             let p = cfg.base_path.trim_end_matches('/').trim_start_matches('/');
-            if p.is_empty() {
-                String::new()
-            } else {
-                format!("{p}/")
-            }
+            if p.is_empty() { String::new() } else { format!("{p}/") }
         };
 
         let reset_generate_url = format!("{}/{}password/reset-generate", base_url, base_path);
@@ -963,10 +929,7 @@ impl UssClient {
             .with_context(|| format!("GetCustomer request failed for '{customer_name}'"))?;
 
         let result = serde_json::from_slice::<CustomerInfo>(&body).with_context(|| {
-            format!(
-                "deserialization failed, raw response: {}",
-                String::from_utf8_lossy(&body)
-            )
+            format!("deserialization failed, raw response: {}", String::from_utf8_lossy(&body))
         })?;
 
         tracing::info!(
@@ -1010,10 +973,7 @@ impl UssClient {
             })?;
 
         let result = serde_json::from_slice::<CustomerPersonalInfo>(&body).with_context(|| {
-            format!(
-                "deserialization failed, raw response: {}",
-                String::from_utf8_lossy(&body)
-            )
+            format!("deserialization failed, raw response: {}", String::from_utf8_lossy(&body))
         })?;
 
         tracing::info!(
@@ -1074,10 +1034,7 @@ impl UssClient {
 
         let result =
             serde_json::from_slice::<PasswordResetTokenResponse>(&body).with_context(|| {
-                format!(
-                    "deserialization failed, raw response: {}",
-                    String::from_utf8_lossy(&body)
-                )
+                format!("deserialization failed, raw response: {}", String::from_utf8_lossy(&body))
             })?;
 
         tracing::info!(

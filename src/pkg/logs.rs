@@ -39,7 +39,6 @@
 /// // Behavior / API-request log (mirrors Go's logs.BehaviorInfo)
 /// logs::behavior_info("[traceID/spanID] [API-REQUEST] …");
 /// ```
-
 use crate::config::LogConfig;
 
 // ── Init / lifecycle ──────────────────────────────────────────────────────────
@@ -78,9 +77,9 @@ pub fn close() {
 pub fn parse_level(level: &str) -> tracing::Level {
     match level.to_ascii_lowercase().as_str() {
         "debug" => tracing::Level::DEBUG,
-        "warn"  => tracing::Level::WARN,
+        "warn" => tracing::Level::WARN,
         "error" => tracing::Level::ERROR,
-        _       => tracing::Level::INFO,
+        _ => tracing::Level::INFO,
     }
 }
 
@@ -163,9 +162,9 @@ pub fn panic_log(msg: &str) -> ! {
 pub fn info_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
     match (user_id, trace_id) {
         (Some(uid), Some(tid)) => tracing::info!(user_id = uid, trace_id = tid, "{}", msg),
-        (Some(uid), None)      => tracing::info!(user_id = uid, "{}", msg),
-        (None, Some(tid))      => tracing::info!(trace_id = tid, "{}", msg),
-        (None, None)           => tracing::info!("{}", msg),
+        (Some(uid), None) => tracing::info!(user_id = uid, "{}", msg),
+        (None, Some(tid)) => tracing::info!(trace_id = tid, "{}", msg),
+        (None, None) => tracing::info!("{}", msg),
     }
 }
 
@@ -175,9 +174,9 @@ pub fn info_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
 pub fn warn_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
     match (user_id, trace_id) {
         (Some(uid), Some(tid)) => tracing::warn!(user_id = uid, trace_id = tid, "{}", msg),
-        (Some(uid), None)      => tracing::warn!(user_id = uid, "{}", msg),
-        (None, Some(tid))      => tracing::warn!(trace_id = tid, "{}", msg),
-        (None, None)           => tracing::warn!("{}", msg),
+        (Some(uid), None) => tracing::warn!(user_id = uid, "{}", msg),
+        (None, Some(tid)) => tracing::warn!(trace_id = tid, "{}", msg),
+        (None, None) => tracing::warn!("{}", msg),
     }
 }
 
@@ -187,9 +186,9 @@ pub fn warn_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
 pub fn error_ctx(msg: &str, user_id: Option<&str>, trace_id: Option<&str>) {
     match (user_id, trace_id) {
         (Some(uid), Some(tid)) => tracing::error!(user_id = uid, trace_id = tid, "{}", msg),
-        (Some(uid), None)      => tracing::error!(user_id = uid, "{}", msg),
-        (None, Some(tid))      => tracing::error!(trace_id = tid, "{}", msg),
-        (None, None)           => tracing::error!("{}", msg),
+        (Some(uid), None) => tracing::error!(user_id = uid, "{}", msg),
+        (None, Some(tid)) => tracing::error!(trace_id = tid, "{}", msg),
+        (None, None) => tracing::error!("{}", msg),
     }
 }
 
@@ -255,24 +254,24 @@ mod tests {
 
     #[test]
     fn parse_level_known_values() {
-        assert_eq!(parse_level("debug"),   tracing::Level::DEBUG);
-        assert_eq!(parse_level("DEBUG"),   tracing::Level::DEBUG);
-        assert_eq!(parse_level("info"),    tracing::Level::INFO);
-        assert_eq!(parse_level("warn"),    tracing::Level::WARN);
-        assert_eq!(parse_level("error"),   tracing::Level::ERROR);
+        assert_eq!(parse_level("debug"), tracing::Level::DEBUG);
+        assert_eq!(parse_level("DEBUG"), tracing::Level::DEBUG);
+        assert_eq!(parse_level("info"), tracing::Level::INFO);
+        assert_eq!(parse_level("warn"), tracing::Level::WARN);
+        assert_eq!(parse_level("error"), tracing::Level::ERROR);
     }
 
     #[test]
     fn parse_level_defaults_to_info() {
         assert_eq!(parse_level("unknown"), tracing::Level::INFO);
-        assert_eq!(parse_level(""),        tracing::Level::INFO);
-        assert_eq!(parse_level("trace"),   tracing::Level::INFO); // Go maps to info too
+        assert_eq!(parse_level(""), tracing::Level::INFO);
+        assert_eq!(parse_level("trace"), tracing::Level::INFO); // Go maps to info too
     }
 
     #[test]
     fn field_helpers() {
         assert_eq!(any_field("user_id", "alice"), "user_id=alice");
-        assert_eq!(any_field("count",   42),      "count=42");
-        assert_eq!(flag("db-timeout"),             "flag=db-timeout");
+        assert_eq!(any_field("count", 42), "count=42");
+        assert_eq!(flag("db-timeout"), "flag=db-timeout");
     }
 }

@@ -12,12 +12,7 @@
 /// When `opentelemetry` is added to `Cargo.toml` in the future the span
 /// created here can be promoted to a full OTel span by calling
 /// `span.set_parent(...)` via `tracing_opentelemetry`.
-use axum::{
-    body::Body,
-    http::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, http::Request, middleware::Next, response::Response};
 use tracing::Instrument;
 
 // ── Skip paths (mirrors Go's `OtelConfig.SkipPaths`) ─────────────────────────
@@ -38,7 +33,7 @@ const SKIP_PATHS: &[&str] = &[
 ///
 /// Mirrors Go's `EnableOtelTrace(cfg OtelConfig) fiber.Handler`.
 pub async fn otel_trace(req: Request<Body>, next: Next) -> Response {
-    let path   = req.uri().path().to_string();
+    let path = req.uri().path().to_string();
     let method = req.method().to_string();
 
     // Skip probe / system paths (mirrors Go's `WithNext` filter).

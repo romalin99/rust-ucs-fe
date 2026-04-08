@@ -19,7 +19,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 const DEFAULT_OUTPUT_DIR: &str = "/tmp/traces";
-const TRACE_FILE_NAME:    &str = "flight_trace.out";
+const TRACE_FILE_NAME: &str = "flight_trace.out";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -30,14 +30,14 @@ pub struct FlightRecorderConfig {
     /// Directory where trace files are written.  Default: `/tmp/traces`.
     pub output_dir: String,
     /// Retention window (not used in Rust but kept for API parity).
-    pub min_age:    Duration,
+    pub min_age: Duration,
 }
 
 impl Default for FlightRecorderConfig {
     fn default() -> Self {
         Self {
             output_dir: DEFAULT_OUTPUT_DIR.to_string(),
-            min_age:    Duration::from_secs(600),
+            min_age: Duration::from_secs(600),
         }
     }
 }
@@ -48,9 +48,9 @@ impl Default for FlightRecorderConfig {
 ///
 /// Mirrors Go's `observability.FlightRecorder`.
 pub struct FlightRecorder {
-    stop_tx:    watch::Sender<bool>,
+    stop_tx: watch::Sender<bool>,
     task_handle: Option<tokio::task::JoinHandle<()>>,
-    cfg:        Arc<FlightRecorderConfig>,
+    cfg: Arc<FlightRecorderConfig>,
 }
 
 impl FlightRecorder {
@@ -77,7 +77,11 @@ impl FlightRecorder {
             listen_signals(cfg_clone, stop_rx).await;
         });
 
-        Ok(Self { stop_tx, task_handle: Some(task_handle), cfg })
+        Ok(Self {
+            stop_tx,
+            task_handle: Some(task_handle),
+            cfg,
+        })
     }
 
     /// Manually trigger a trace dump without waiting for a signal.
@@ -104,7 +108,7 @@ impl FlightRecorder {
 async fn listen_signals(cfg: Arc<FlightRecorderConfig>, mut stop_rx: watch::Receiver<bool>) {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut usr1 = match signal(SignalKind::user_defined1()) {
             Ok(s) => s,
@@ -165,7 +169,7 @@ fn dump_trace(output_dir: &str) -> anyhow::Result<()> {
     let path = Path::new(output_dir).join(TRACE_FILE_NAME);
     tracing::info!("[FlightRecorder] dumping diagnostic snapshot to {}", path.display());
 
-    let ts  = chrono::Utc::now().to_rfc3339();
+    let ts = chrono::Utc::now().to_rfc3339();
     let pid = std::process::id();
 
     let content = serde_json::json!({

@@ -61,8 +61,8 @@ fn log_stats() {
     let (rss_mb, virt_mb) = read_proc_mem().unwrap_or((0.0, 0.0));
 
     tracing::warn!(
-        rss_mb    = rss_mb,
-        virt_mb   = virt_mb,
+        rss_mb = rss_mb,
+        virt_mb = virt_mb,
         num_tasks = num_tasks,
         "[memstats] process memory snapshot"
     );
@@ -74,7 +74,7 @@ fn read_proc_mem() -> Option<(f64, f64)> {
     #[cfg(target_os = "linux")]
     {
         let content = std::fs::read_to_string("/proc/self/status").ok()?;
-        let mut rss  = 0u64;
+        let mut rss = 0u64;
         let mut virt = 0u64;
         for line in content.lines() {
             if let Some(kb) = line.strip_prefix("VmRSS:") {

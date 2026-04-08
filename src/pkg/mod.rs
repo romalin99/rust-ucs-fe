@@ -17,7 +17,6 @@
 /// | `pkg/redis`              | _(via infra)_          | Client lives in `infra/`                    |
 /// | `pkg/bigcache`           | `config::BigCacheConfig` | Struct in config module                   |
 /// | `pkg/pprof`              | `config::PprofConfig`  | Struct in config module                     |
-
 pub mod concurrency;
 pub mod constant;
 pub mod conv;

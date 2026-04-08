@@ -11,8 +11,8 @@
 /// When a proper Rust OpenAPI / Swagger crate (e.g. `utoipa`) is added later,
 /// this module should be updated to mount the full UI.
 use axum::{Json, Router, routing::get};
-use std::net::UdpSocket;
 use serde_json::json;
+use std::net::UdpSocket;
 
 // ── Public registration ───────────────────────────────────────────────────────
 

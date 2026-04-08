@@ -9,7 +9,6 @@
 /// | `error_handler.go` | `error_handler`      | Wrap non-JSON error responses  |
 /// | `recover.go`       | `recover`            | Panic → 500 JSON               |
 /// | `trace.go`         | `trace`              | OTel / tracing span per request|
-
 pub mod error_handler;
 pub mod metrics;
 pub mod recover;

@@ -170,9 +170,7 @@ impl InitLoadingData {
 /// mirrors Go's `GetFieldConfig` which calls `initWg.Wait()` internally.
 pub async fn get_field_config(merchant_code: &str) -> Option<MerchantDropdownMap> {
     wait_for_init().await;
-    global_configs()
-        .get(merchant_code)
-        .map(|v| Arc::clone(v.value()))
+    global_configs().get(merchant_code).map(|v| Arc::clone(v.value()))
 }
 
 pub fn set_field_config(key: String, value: HashMap<String, Vec<DropdownItem>>) {

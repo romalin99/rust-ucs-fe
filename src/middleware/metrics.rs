@@ -37,14 +37,11 @@ static REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
 
 static REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
-        HistogramOpts::new(
-            "http_request_duration_seconds",
-            "HTTP request duration in seconds",
-        )
-        .const_label("service", SERVICE_NAME)
-        .buckets(vec![
-            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
-        ]),
+        HistogramOpts::new("http_request_duration_seconds", "HTTP request duration in seconds",)
+            .const_label("service", SERVICE_NAME)
+            .buckets(vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+            ]),
         &["method", "path", "status"]
     )
     .expect("http_request_duration_seconds registration failed")
@@ -129,15 +126,9 @@ pub async fn prometheus_metrics(req: Request<Body>, next: Next) -> Response {
         .unwrap_or(0.0);
 
     REQUESTS_TOTAL.with_label_values(&labels).inc();
-    REQUEST_DURATION
-        .with_label_values(&labels)
-        .observe(duration);
-    REQUEST_SIZE
-        .with_label_values(&labels)
-        .observe(request_size);
-    RESPONSE_SIZE
-        .with_label_values(&labels)
-        .observe(response_size);
+    REQUEST_DURATION.with_label_values(&labels).observe(duration);
+    REQUEST_SIZE.with_label_values(&labels).observe(request_size);
+    RESPONSE_SIZE.with_label_values(&labels).observe(response_size);
 
     response
 }

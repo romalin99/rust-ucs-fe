@@ -19,11 +19,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use axum::{
+    Json,
     body::Body,
     extract::{Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use bytes::Bytes;
 use serde::Deserialize;
@@ -87,7 +87,7 @@ pub async fn health() -> Response {
     let mut resp = (
         StatusCode::OK,
         [
-            (axum::http::header::CONTENT_TYPE,  "application/json"),
+            (axum::http::header::CONTENT_TYPE, "application/json"),
             (axum::http::header::CACHE_CONTROL, "no-cache"),
         ],
         Body::empty(),
@@ -152,8 +152,8 @@ pub async fn timeout_handler() -> Response {
 /// Mirrors Go's `QuickHandler`: polls every 500 ms for 6 s total.
 /// Returns 408 if the request is cancelled before completion.
 pub async fn quick() -> Response {
-    let start    = std::time::Instant::now();
-    let target   = Duration::from_secs(6);
+    let start = std::time::Instant::now();
+    let target = Duration::from_secs(6);
     let mut tick = time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
@@ -280,7 +280,7 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
 
     // 2. Read entire body (capped at MAX_SIZE + 1 to detect oversize).
     let body_bytes = match axum::body::to_bytes(req.into_body(), MAX_SIZE + 1).await {
-        Ok(b)  => b,
+        Ok(b) => b,
         Err(e) => {
             error!("Failed to read body: {e}");
             return (
@@ -302,7 +302,7 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
     // 3. Parse the multipart body.
     let field = match parse_multipart_file(&body_bytes, &boundary) {
         Some(f) => f,
-        None    => {
+        None => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "code": 400, "message": "file is required" })),
@@ -333,8 +333,8 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
 
     let (save_name, save_path) = if allowed_exts.is_some() {
         let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let n  = format!("{ts}{ext}");
-        let p  = format!("./uploads/{n}");
+        let n = format!("{ts}{ext}");
+        let p = format!("./uploads/{n}");
         (n, p)
     } else {
         let n = format!("{}_{}", chrono::Utc::now().timestamp(), &field.filename);
@@ -365,7 +365,7 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
 
 struct MultipartField {
     filename: String,
-    data:     Bytes,
+    data: Bytes,
 }
 
 /// Extract `parse_boundary` from a `Content-Type` header value such as
@@ -384,7 +384,7 @@ fn parse_boundary(content_type: &str) -> Option<String> {
 /// Uses byte-level splitting to preserve binary content intact (images, PDFs, etc.).
 fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> {
     let delim = format!("--{boundary}").into_bytes();
-    let sep   = b"\r\n\r\n";
+    let sep = b"\r\n\r\n";
 
     let mut start = 0;
     loop {
@@ -407,7 +407,7 @@ fn parse_multipart_file(body: &Bytes, boundary: &str) -> Option<MultipartField> 
             None => continue,
         };
         let headers_raw = &part[..sep_pos];
-        let file_body   = &part[sep_pos + sep.len()..];
+        let file_body = &part[sep_pos + sep.len()..];
 
         let headers_str = String::from_utf8_lossy(headers_raw);
         let headers_lower = headers_str.to_lowercase();

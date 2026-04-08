@@ -92,10 +92,7 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     let x_trace = headers.get("X-Trace-Id").and_then(|v| v.to_str().ok());
     let x_span = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
     if x_trace.is_some() || x_span.is_some() {
-        return (
-            x_trace.unwrap_or("unknown").to_string(),
-            x_span.unwrap_or("unknown").to_string(),
-        );
+        return (x_trace.unwrap_or("unknown").to_string(), x_span.unwrap_or("unknown").to_string());
     }
 
     // 2. W3C traceparent: "00-<traceID>-<spanID>-<flags>"
@@ -150,11 +147,7 @@ fn extract_client_ip(req: &Request<Body>) -> String {
     }
 
     // 2. X-Real-IP
-    if let Some(xrip) = headers
-        .get("X-Real-IP")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-    {
+    if let Some(xrip) = headers.get("X-Real-IP").and_then(|v| v.to_str().ok()).map(str::trim) {
         if is_public_ip(xrip) {
             return xrip.to_string();
         }

@@ -3,8 +3,8 @@
 /// Mirrors Go's `internal/service/cron.go`.
 /// Uses `tokio::time::interval` for simple interval-based jobs (no external cron crate needed).
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::config::JobConfig;
@@ -18,7 +18,7 @@ pub struct CommonCronJobs {
 
 /// Shared repo references passed into each cron job.
 struct CronRepos {
-    merchant_repo:    Arc<MerchantRuleRepository>,
+    merchant_repo: Arc<MerchantRuleRepository>,
     uss_mapping_repo: Arc<FieldIdUssMappingRepository>,
 }
 
@@ -30,7 +30,10 @@ impl CommonCronJobs {
         uss_mapping_repo: Arc<FieldIdUssMappingRepository>,
     ) -> Self {
         let mut stop_handles = Vec::new();
-        let repos = Arc::new(CronRepos { merchant_repo, uss_mapping_repo });
+        let repos = Arc::new(CronRepos {
+            merchant_repo,
+            uss_mapping_repo,
+        });
 
         for (name, cfg) in jobs {
             if !cfg.enabled {

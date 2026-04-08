@@ -87,11 +87,7 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
     let mut global_builder = GovernorConfigBuilder::default().key_extractor(GlobalKeyExtractor);
     global_builder.per_second(800);
     global_builder.burst_size(800);
-    let global_cfg = Arc::new(
-        global_builder
-            .finish()
-            .expect("invalid global governor config"),
-    );
+    let global_cfg = Arc::new(global_builder.finish().expect("invalid global governor config"));
 
     // Per-path: 500 rps, key = request path.
     // Mirrors Go's `getListLimiter` with `KeyGenerator: func(c) string { return c.Path() }`.
@@ -120,9 +116,7 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
                 let encoder = TextEncoder::new();
                 let metric_families = prometheus::gather();
                 let mut buffer = Vec::new();
-                encoder
-                    .encode(&metric_families, &mut buffer)
-                    .unwrap_or_default();
+                encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
                 (
                     [(
                         axum::http::header::CONTENT_TYPE,
@@ -154,10 +148,7 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
         );
 
     let materials_router = Router::new()
-        .route(
-            "/verification/materials",
-            post(handler::submit_verify_materials),
-        )
+        .route("/verification/materials", post(handler::submit_verify_materials))
         .layer(GovernorLayer::new(path_cfg));
 
     let api_router = Router::new()

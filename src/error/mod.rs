@@ -23,45 +23,45 @@ pub struct ErrorCode(pub &'static str);
 
 impl ErrorCode {
     // ── General ──────────────────────────────────────────────────────────────
-    pub const SYS_ERR:         Self = Self("unknown_err");
-    pub const PARAM_ERR:       Self = Self("param_err");
-    pub const REQ_ERR:         Self = Self("req_param_err");
-    pub const FORMAT_ERROR:    Self = Self("format_error");
-    pub const UPLOAD_ERROR:    Self = Self("upload_error");
-    pub const JSON_ERR:        Self = Self("json_err");
-    pub const AUTH_ERR:        Self = Self("auth_err");
-    pub const SIGN_ERR:        Self = Self("sign_err");
-    pub const FREQUENCY_ERR:   Self = Self("frequency_err");
+    pub const SYS_ERR: Self = Self("unknown_err");
+    pub const PARAM_ERR: Self = Self("param_err");
+    pub const REQ_ERR: Self = Self("req_param_err");
+    pub const FORMAT_ERROR: Self = Self("format_error");
+    pub const UPLOAD_ERROR: Self = Self("upload_error");
+    pub const JSON_ERR: Self = Self("json_err");
+    pub const AUTH_ERR: Self = Self("auth_err");
+    pub const SIGN_ERR: Self = Self("sign_err");
+    pub const FREQUENCY_ERR: Self = Self("frequency_err");
     pub const NETWORK_TIMEOUT: Self = Self("network_timeout");
-    pub const STATUS_ERR:      Self = Self("status_err");
-    pub const AMOUNT_INVALID:  Self = Self("amount_invalid");
+    pub const STATUS_ERR: Self = Self("status_err");
+    pub const AMOUNT_INVALID: Self = Self("amount_invalid");
 
     // ── Database ─────────────────────────────────────────────────────────────
-    pub const DATA_NOT_FOUND:      Self = Self("data_not_found");
-    pub const DATA_HAS_EXISTED:    Self = Self("data_has_existed");
-    pub const INSERT_FAILED:       Self = Self("insert_failed");
-    pub const UPDATE_FAILED:       Self = Self("update_failed");
-    pub const DELETE_FAILED:       Self = Self("delete_failed");
-    pub const NO_DATA_UPDATE:      Self = Self("no_data_update");
+    pub const DATA_NOT_FOUND: Self = Self("data_not_found");
+    pub const DATA_HAS_EXISTED: Self = Self("data_has_existed");
+    pub const INSERT_FAILED: Self = Self("insert_failed");
+    pub const UPDATE_FAILED: Self = Self("update_failed");
+    pub const DELETE_FAILED: Self = Self("delete_failed");
+    pub const NO_DATA_UPDATE: Self = Self("no_data_update");
     pub const DB_BIND_PARAM_ERROR: Self = Self("db_bind_param_error");
-    pub const SQL_EXECUTION_FAIL:  Self = Self("sql_execution_fail");
+    pub const SQL_EXECUTION_FAIL: Self = Self("sql_execution_fail");
 
     // ── Merchant ─────────────────────────────────────────────────────────────
-    pub const MERCHANT_NOT_FOUND:  Self = Self("merchant_not_found");
-    pub const MERCHANT_EXISTED:    Self = Self("merchant_already_exist");
-    pub const MERCHANT_IS_NULL:    Self = Self("merchant_is_null");
-    pub const MERCHANT_NOT_EXIST:  Self = Self("merchant_not_exist");
+    pub const MERCHANT_NOT_FOUND: Self = Self("merchant_not_found");
+    pub const MERCHANT_EXISTED: Self = Self("merchant_already_exist");
+    pub const MERCHANT_IS_NULL: Self = Self("merchant_is_null");
+    pub const MERCHANT_NOT_EXIST: Self = Self("merchant_not_exist");
 
     // ── Business ─────────────────────────────────────────────────────────────
-    pub const FIELD_CONFIG_NOT_EXIST:      Self = Self("field_config_not_exist");
+    pub const FIELD_CONFIG_NOT_EXIST: Self = Self("field_config_not_exist");
     pub const VALIDATION_RECORD_NOT_EXIST: Self = Self("validation_record_not_exist");
-    pub const EXCEED_LIMIT:                Self = Self("exceed_limit");
-    pub const TASK_SUBMIT_FAIL:            Self = Self("task_submit_fail");
-    pub const INVALID_PARAM:               Self = Self("invalid_param");
-    pub const INVALID_DATE_PARAM:          Self = Self("invalid_date_param");
-    pub const TIME_RANGE_ERROR:            Self = Self("time_range_error");
-    pub const NO_LOG_RECORD:               Self = Self("no_log_record");
-    pub const INVALID_OPERAND:             Self = Self("invalid_operand");
+    pub const EXCEED_LIMIT: Self = Self("exceed_limit");
+    pub const TASK_SUBMIT_FAIL: Self = Self("task_submit_fail");
+    pub const INVALID_PARAM: Self = Self("invalid_param");
+    pub const INVALID_DATE_PARAM: Self = Self("invalid_date_param");
+    pub const TIME_RANGE_ERROR: Self = Self("time_range_error");
+    pub const NO_LOG_RECORD: Self = Self("no_log_record");
+    pub const INVALID_OPERAND: Self = Self("invalid_operand");
 
     // ── Downstream clients ────────────────────────────────────────────────────
     pub const UCS_CLIENT_ERR: Self = Self("ucs_client_err");
@@ -75,16 +75,16 @@ impl ErrorCode {
     pub const CUSTOMER_ILLEGAL_MERCHANT: Self = Self("customer_merchant_error");
 
     // ── Rust-only additions ───────────────────────────────────────────────────
-    pub const INTERNAL_ERROR:             Self = Self("internal_error");
-    pub const PARAM_MISSING:              Self = Self("param_missing");
-    pub const RULE_CONFIG_INVALID:        Self = Self("rule_config_invalid");
-    pub const CUSTOMER_FETCH_FAILED:      Self = Self("fetch_failed");
-    pub const RETRY_LIMIT_EXHAUSTED:      Self = Self("retry_limit_exhausted");
-    pub const MCS_FAILED:                 Self = Self("mcs_failed");
-    pub const PARSE_FAILED:               Self = Self("parse_failed");
-    pub const PASSWORD_RESET_FAILED:      Self = Self("reset_failed");
-    pub const RATE_LIMIT_EXCEEDED:        Self = Self("rate_limit_exceeded");
-    pub const UNAVAILABLE:                Self = Self("unavailable");
+    pub const INTERNAL_ERROR: Self = Self("internal_error");
+    pub const PARAM_MISSING: Self = Self("param_missing");
+    pub const RULE_CONFIG_INVALID: Self = Self("rule_config_invalid");
+    pub const CUSTOMER_FETCH_FAILED: Self = Self("fetch_failed");
+    pub const RETRY_LIMIT_EXHAUSTED: Self = Self("retry_limit_exhausted");
+    pub const MCS_FAILED: Self = Self("mcs_failed");
+    pub const PARSE_FAILED: Self = Self("parse_failed");
+    pub const PASSWORD_RESET_FAILED: Self = Self("reset_failed");
+    pub const RATE_LIMIT_EXCEEDED: Self = Self("rate_limit_exceeded");
+    pub const UNAVAILABLE: Self = Self("unavailable");
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -127,27 +127,27 @@ pub enum Module {
 impl Module {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Oracle             => "oracle",
-            Self::Redis              => "redis",
-            Self::Mongo              => "mongo",
-            Self::SecurityQuestion   => "security_question",
-            Self::Customer           => "customer",
-            Self::Profile            => "profile",
-            Self::NonBusiness        => "non",
-            Self::Merchant           => "merchant",
-            Self::Remember           => "remember",
-            Self::Password           => "password",
+            Self::Oracle => "oracle",
+            Self::Redis => "redis",
+            Self::Mongo => "mongo",
+            Self::SecurityQuestion => "security_question",
+            Self::Customer => "customer",
+            Self::Profile => "profile",
+            Self::NonBusiness => "non",
+            Self::Merchant => "merchant",
+            Self::Remember => "remember",
+            Self::Password => "password",
             Self::CustomerPermission => "customer_permission",
-            Self::Sort               => "sort",
-            Self::Mail               => "mail",
-            Self::DynamicField       => "dynamic_field",
-            Self::Relay              => "relay",
-            Self::Register           => "register",
-            Self::Verification       => "verification",
-            Self::Database           => "db",
-            Self::Wps                => "wps",
-            Self::Uss                => "uss",
-            Self::Mcs                => "mcs",
+            Self::Sort => "sort",
+            Self::Mail => "mail",
+            Self::DynamicField => "dynamic_field",
+            Self::Relay => "relay",
+            Self::Register => "register",
+            Self::Verification => "verification",
+            Self::Database => "db",
+            Self::Wps => "wps",
+            Self::Uss => "uss",
+            Self::Mcs => "mcs",
         }
     }
 }
@@ -230,18 +230,18 @@ impl ErrorResponse {
     /// Build `"ucs-fe.<module>.<code>"` error code automatically.
     pub fn new(module: &Module, code: &ErrorCode, message: impl Into<String>) -> Self {
         Self {
-            success:    false,
+            success: false,
             error_code: format!("{}.{}.{}", SERVICE_PREFIX, module.as_str(), code.0),
-            message:    message.into(),
+            message: message.into(),
         }
     }
 
     /// Build from a pre-assembled raw error code string (for handler inline usage).
     pub fn raw(error_code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            success:    false,
+            success: false,
             error_code: error_code.into(),
-            message:    message.into(),
+            message: message.into(),
         }
     }
 }
@@ -254,22 +254,22 @@ impl AppError {
     /// returns the module/code to the caller.
     fn module_and_code(&self) -> (&Module, &ErrorCode) {
         match self {
-            Self::MerchantNotFound(_)                 => (&Module::Merchant,    &ErrorCode::MERCHANT_NOT_FOUND),
-            Self::CustomerFetchFailed(_)              => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
-            Self::CustomerPersonalInfoFetchFailed(_)  => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
-            Self::QuestionLimitExceeded               => (&Module::Verification,&ErrorCode::EXCEED_LIMIT),
-            Self::RedisNotFound                       => (&Module::Redis,       &ErrorCode::DATA_NOT_FOUND),
-            Self::WpsApiFailed(_)                     => (&Module::Wps,         &ErrorCode::WPS_CLIENT_ERR),
-            Self::EmailAlreadyBound                   => (&Module::Verification,&ErrorCode::STATUS_ERR),
-            Self::PhoneAlreadyBound                   => (&Module::Verification,&ErrorCode::STATUS_ERR),
-            Self::ParseJsonFailed(_)                  => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
-            Self::VerifyPlayerInfoFailed(_)           => (&Module::Mcs,         &ErrorCode::MCS_CLIENT_ERR),
-            Self::PasswordResetFailed(_)              => (&Module::Uss,         &ErrorCode::USS_CLIENT_ERR),
-            Self::OracleError(_)                      => (&Module::Oracle,      &ErrorCode::SQL_EXECUTION_FAIL),
-            Self::RedisError(_)                       => (&Module::Redis,       &ErrorCode::SYS_ERR),
-            Self::HttpClientError(_)                  => (&Module::NonBusiness, &ErrorCode::NETWORK_TIMEOUT),
-            Self::JsonError(_)                        => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
-            Self::Internal(_)                         => (&Module::NonBusiness, &ErrorCode::SYS_ERR),
+            Self::MerchantNotFound(_) => (&Module::Merchant, &ErrorCode::MERCHANT_NOT_FOUND),
+            Self::CustomerFetchFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
+            Self::CustomerPersonalInfoFetchFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
+            Self::QuestionLimitExceeded => (&Module::Verification, &ErrorCode::EXCEED_LIMIT),
+            Self::RedisNotFound => (&Module::Redis, &ErrorCode::DATA_NOT_FOUND),
+            Self::WpsApiFailed(_) => (&Module::Wps, &ErrorCode::WPS_CLIENT_ERR),
+            Self::EmailAlreadyBound => (&Module::Verification, &ErrorCode::STATUS_ERR),
+            Self::PhoneAlreadyBound => (&Module::Verification, &ErrorCode::STATUS_ERR),
+            Self::ParseJsonFailed(_) => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
+            Self::VerifyPlayerInfoFailed(_) => (&Module::Mcs, &ErrorCode::MCS_CLIENT_ERR),
+            Self::PasswordResetFailed(_) => (&Module::Uss, &ErrorCode::USS_CLIENT_ERR),
+            Self::OracleError(_) => (&Module::Oracle, &ErrorCode::SQL_EXECUTION_FAIL),
+            Self::RedisError(_) => (&Module::Redis, &ErrorCode::SYS_ERR),
+            Self::HttpClientError(_) => (&Module::NonBusiness, &ErrorCode::NETWORK_TIMEOUT),
+            Self::JsonError(_) => (&Module::NonBusiness, &ErrorCode::JSON_ERR),
+            Self::Internal(_) => (&Module::NonBusiness, &ErrorCode::SYS_ERR),
         }
     }
 }
@@ -290,9 +290,9 @@ impl IntoResponse for AppError {
 /// Mirrors Go's `resp.CommonResponse`.
 #[derive(Debug, Serialize)]
 pub struct CommonValue<T: Serialize> {
-    pub code:    i32,
+    pub code: i32,
     pub message: String,
-    pub data:    T,
+    pub data: T,
 }
 
 /// Top-level success response wrapping `CommonValue`.
@@ -305,7 +305,7 @@ pub struct CommonValue<T: Serialize> {
 #[derive(Debug, Serialize)]
 pub struct ApiSuccess<T: Serialize> {
     pub success: bool,
-    pub value:   CommonValue<T>,
+    pub value: CommonValue<T>,
 }
 
 impl<T: Serialize> ApiSuccess<T> {
@@ -313,7 +313,7 @@ impl<T: Serialize> ApiSuccess<T> {
         Self {
             success: true,
             value: CommonValue {
-                code:    0,
+                code: 0,
                 message: "success".into(),
                 data,
             },
@@ -328,12 +328,15 @@ impl<T: Serialize> ApiSuccess<T> {
 #[derive(Debug, Serialize)]
 pub struct SuccessResponse<T: Serialize> {
     pub success: bool,
-    pub value:   T,
+    pub value: T,
 }
 
 impl<T: Serialize> SuccessResponse<T> {
     pub fn new(value: T) -> Self {
-        Self { success: true, value }
+        Self {
+            success: true,
+            value,
+        }
     }
 }
 
@@ -349,10 +352,16 @@ pub struct BaseResponse {
 
 impl BaseResponse {
     pub fn ok() -> Self {
-        Self { success: true, message: None }
+        Self {
+            success: true,
+            message: None,
+        }
     }
 
     pub fn ok_with_message(msg: impl Into<String>) -> Self {
-        Self { success: true, message: Some(msg.into()) }
+        Self {
+            success: true,
+            message: Some(msg.into()),
+        }
     }
 }

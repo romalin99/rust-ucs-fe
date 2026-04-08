@@ -194,10 +194,7 @@ impl Serialize for VerifyFinanceHistoryResult {
         use serde::ser::SerializeStruct;
         let mut st = s.serialize_struct("VerifyFinanceHistoryResult", 2)?;
         st.serialize_field("verifyPlayerFinanceInfo", &self.verify_player_finance_info)?;
-        st.serialize_field(
-            "verifyPlayerTransactionHistory",
-            &self.verify_player_history_info,
-        )?;
+        st.serialize_field("verifyPlayerTransactionHistory", &self.verify_player_history_info)?;
         st.end()
     }
 }
@@ -308,11 +305,7 @@ impl McsClient {
         let base_url = cfg.host.trim_end_matches('/').to_string();
         let base_path = {
             let p = cfg.base_path.trim_end_matches('/').trim_start_matches('/');
-            if p.is_empty() {
-                String::new()
-            } else {
-                format!("{p}/")
-            }
+            if p.is_empty() { String::new() } else { format!("{p}/") }
         };
 
         let verify_player_info_url = format!("{}/{}player/verifyPlayerInfo", base_url, base_path);
@@ -457,10 +450,7 @@ impl McsClient {
         );
 
         serde_json::from_slice::<VerifyFinanceHistoryResp>(&resp_body).with_context(|| {
-            format!(
-                "{OP}: unmarshal failed, raw={}",
-                String::from_utf8_lossy(&resp_body)
-            )
+            format!("{OP}: unmarshal failed, raw={}", String::from_utf8_lossy(&resp_body))
         })
     }
 }

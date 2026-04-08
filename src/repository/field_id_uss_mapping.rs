@@ -21,17 +21,11 @@ const COLUMNS: &str = "ID, MCS_ID, FIELD_ID, FIELD_NAME, USS_ID, CREATE_TIME, UP
 // ---------------------------------------------------------------------------
 
 static SQL_FIND_ALL: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
-    format!(
-        "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING ORDER BY FIELD_ID, USS_ID",
-        COLUMNS
-    )
+    format!("SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING ORDER BY FIELD_ID, USS_ID", COLUMNS)
 });
 
 static SQL_FIND_ONE: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
-    format!(
-        "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1",
-        COLUMNS
-    )
+    format!("SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1", COLUMNS)
 });
 
 static SQL_FIND_BY_FIELD_MCS: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| {
@@ -88,12 +82,8 @@ impl FieldIdUssMappingRepository {
             field_id: row.get::<_, String>(2).context("FIELD_ID")?,
             field_name: row.get::<_, String>(3).context("FIELD_NAME")?,
             uss_id: row.get::<_, i32>(4).context("USS_ID")?,
-            create_time: row
-                .get::<_, Option<chrono::NaiveDateTime>>(5)
-                .unwrap_or(None),
-            update_time: row
-                .get::<_, Option<chrono::NaiveDateTime>>(6)
-                .unwrap_or(None),
+            create_time: row.get::<_, Option<chrono::NaiveDateTime>>(5).unwrap_or(None),
+            update_time: row.get::<_, Option<chrono::NaiveDateTime>>(6).unwrap_or(None),
         })
     }
 
@@ -172,9 +162,7 @@ impl FieldIdUssMappingRepository {
             timeout,
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
-                let rows = conn
-                    .query(&*SQL_FIND_ONE, &[&id])
-                    .context("find_one query")?;
+                let rows = conn.query(&*SQL_FIND_ONE, &[&id]).context("find_one query")?;
                 for row_result in rows {
                     let row = row_result.context("read row")?;
                     return Ok(Some(Self::map_row(&row)?));
@@ -193,12 +181,8 @@ impl FieldIdUssMappingRepository {
     pub async fn find_one_for_update(
         &self,
         id: i64,
-    ) -> Result<
-        Option<(
-            FieldIdUssMapping,
-            r2d2::PooledConnection<super::OracleConnectionManager>,
-        )>,
-    > {
+    ) -> Result<Option<(FieldIdUssMapping, r2d2::PooledConnection<super::OracleConnectionManager>)>>
+    {
         let pool = self.pool.clone();
         let timeout = self.read_timeout;
         let lock_wait = lock_timeout();
@@ -212,9 +196,7 @@ impl FieldIdUssMappingRepository {
                     "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1 FOR UPDATE WAIT {}",
                     COLUMNS, lock_wait
                 );
-                let rows = conn
-                    .query(&sql, &[&id])
-                    .context("find_one_for_update query")?;
+                let rows = conn.query(&sql, &[&id]).context("find_one_for_update query")?;
                 for row_result in rows {
                     let row = row_result.context("read row")?;
                     let m = Self::map_row(&row)?;
@@ -366,10 +348,7 @@ impl FieldIdUssMappingRepository {
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
                 let stmt = conn
-                    .execute(
-                        "DELETE FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1",
-                        &[&id],
-                    )
+                    .execute("DELETE FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1", &[&id])
                     .context("delete field_id_uss_mapping")?;
                 let affected = stmt.row_count().context("row_count")?;
                 conn.commit().context("commit delete")?;

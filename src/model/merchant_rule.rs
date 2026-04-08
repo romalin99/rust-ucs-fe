@@ -52,10 +52,7 @@ impl MerchantRuleConfig {
     pub fn parse_questions(&self) -> anyhow::Result<std::collections::HashMap<String, Question>> {
         let raw = self.questions_json.as_deref().unwrap_or("");
         if raw.is_empty() {
-            anyhow::bail!(
-                "questions field is empty for merchant: {}",
-                self.merchant_code
-            );
+            anyhow::bail!("questions field is empty for merchant: {}", self.merchant_code);
         }
         let map: std::collections::HashMap<String, Question> =
             serde_json::from_str(raw).map_err(|e| {
@@ -105,10 +102,7 @@ pub struct QuestionInfo {
     pub field_attribute: String,
     #[serde(rename = "fieldType")]
     pub field_type: String,
-    #[serde(
-        rename = "fieldDropdownList",
-        skip_serializing_if = "is_dropdown_empty"
-    )]
+    #[serde(rename = "fieldDropdownList", skip_serializing_if = "is_dropdown_empty")]
     pub field_dropdown_list: Option<Vec<crate::model::template::DropdownItem>>,
 }
 
@@ -235,10 +229,8 @@ impl MerchantRule {
             },
         };
 
-        let result: HashMap<String, String> = list
-            .iter()
-            .map(|t| (t.field_id.clone(), t.field_translation.clone()))
-            .collect();
+        let result: HashMap<String, String> =
+            list.iter().map(|t| (t.field_id.clone(), t.field_translation.clone())).collect();
 
         tracing::info!(
             language,

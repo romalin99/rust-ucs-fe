@@ -57,7 +57,8 @@ pub static HISTORY_SETTERS: &[FhFieldSetter] = &[
         field_id: "LAST_DEPOSIT_TIME",
         apply: |r, v, acc| {
             r.verify_player_history_info.last_deposit_time = v;
-            r.verify_player_history_info.last_deposit_time_range_in_day = acc.trim().parse().unwrap_or(0);
+            r.verify_player_history_info.last_deposit_time_range_in_day =
+                acc.trim().parse().unwrap_or(0);
         },
     },
     FhFieldSetter {
@@ -75,7 +76,8 @@ pub static HISTORY_SETTERS: &[FhFieldSetter] = &[
         field_id: "LAST_WITHDRAWAL_TIME",
         apply: |r, v, acc| {
             r.verify_player_history_info.last_withdraw_time = v;
-            r.verify_player_history_info.last_withdraw_time_range_in_day = acc.trim().parse().unwrap_or(0);
+            r.verify_player_history_info.last_withdraw_time_range_in_day =
+                acc.trim().parse().unwrap_or(0);
         },
     },
     FhFieldSetter {
@@ -107,10 +109,7 @@ pub fn apply_field_setters(
             continue;
         }
 
-        let field_value = field_id_map
-            .get(s.field_id)
-            .map(|s| s.as_str())
-            .unwrap_or("");
+        let field_value = field_id_map.get(s.field_id).map(|s| s.as_str()).unwrap_or("");
 
         if field_value.is_empty() {
             // 已绑定但未填写，MCS 约定用 "NULL" 表示空值
@@ -119,10 +118,7 @@ pub fn apply_field_setters(
         }
 
         // 已绑定且有实际值，accuracy 取问题配置
-        let accuracy = question_cfg
-            .get(s.field_id)
-            .map(|q| q.accuracy.clone())
-            .unwrap_or_default();
+        let accuracy = question_cfg.get(s.field_id).map(|q| q.accuracy.clone()).unwrap_or_default();
         (s.apply)(req, field_value.to_string(), accuracy);
     }
 }

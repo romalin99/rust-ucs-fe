@@ -41,7 +41,9 @@ use crate::{
     observability::FlightRecorder,
     pkg::memstats,
     router::build_router,
-    service::{CommonCronJobs, FieldIdUssMappingLoader, InitLoadingData, PlayerVerificationService},
+    service::{
+        CommonCronJobs, FieldIdUssMappingLoader, InitLoadingData, PlayerVerificationService,
+    },
 };
 
 // ── Application container ─────────────────────────────────────────────────────
@@ -49,15 +51,15 @@ use crate::{
 /// Holds all runtime components in dependency order.
 /// Mirrors Go's `application` struct in `cmd/api/main.go`.
 struct Application {
-    infra:                Arc<AppInfra>,
-    cron_jobs:            CommonCronJobs,
-    field_loader:         InitLoadingData,
-    uss_mapping_loader:   FieldIdUssMappingLoader,
-    flight_recorder:      Option<FlightRecorder>,
-    mem_stats_handle:     memstats::StopHandle,
-    oracle_monitor_stop:  tokio::sync::watch::Sender<bool>,
-    router:               axum::Router,
-    cfg:                  AppConfig,
+    infra: Arc<AppInfra>,
+    cron_jobs: CommonCronJobs,
+    field_loader: InitLoadingData,
+    uss_mapping_loader: FieldIdUssMappingLoader,
+    flight_recorder: Option<FlightRecorder>,
+    mem_stats_handle: memstats::StopHandle,
+    oracle_monitor_stop: tokio::sync::watch::Sender<bool>,
+    router: axum::Router,
+    cfg: AppConfig,
 }
 
 impl Application {
@@ -79,29 +81,25 @@ impl Application {
         // Mirrors Go's `buildInfra` → `c.LoadOracleConnectInfoFromAws(envStr)`.
         // Falls back to values already present in the TOML config if AWS fails
         // (useful in local / dev environments).
-        let oracle_info = load_oracle_connect_info(&cfg.env).await
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    error = %e,
-                    "AWS oracle creds load failed — falling back to config values"
-                );
-                OracleConnectInfo {
-                    user:           cfg.oracle.user.clone(),
-                    password:       cfg.oracle.password.clone(),
-                    connect_string: cfg.oracle.connect_string.clone(),
-                }
-            });
+        let oracle_info = load_oracle_connect_info(&cfg.env).await.unwrap_or_else(|e| {
+            tracing::warn!(
+                error = %e,
+                "AWS oracle creds load failed — falling back to config values"
+            );
+            OracleConnectInfo {
+                user: cfg.oracle.user.clone(),
+                password: cfg.oracle.password.clone(),
+                connect_string: cfg.oracle.connect_string.clone(),
+            }
+        });
 
         // ── Infrastructure (Oracle pool, Redis, HTTP clients, repos) ─────────
         let infra = Arc::new(AppInfra::new(&cfg, &oracle_info).await?);
 
         // ── Redis multi-DB (DB 2 for rate limiting) ─────────────────────────
         // Mirrors Go's `rdsCfg.InitDBSV2()`.
-        crate::infra::init_redis_multi_db(
-            &cfg.redis.addr,
-            &cfg.redis.password,
-            &cfg.redis.dbs,
-        ).await;
+        crate::infra::init_redis_multi_db(&cfg.redis.addr, &cfg.redis.password, &cfg.redis.dbs)
+            .await;
 
         // ── Field-config loader (initial load + 30-min periodic refresh) ─────
         // Mirrors Go's `service.NewInitLoadingData(com)`.
@@ -143,10 +141,20 @@ impl Application {
         );
 
         // ── Handlers → state → router ─────────────────────────────────────────
-        let state  = AppState::new(Arc::new(cfg.clone()), Arc::new(player_svc));
+        let state = AppState::new(Arc::new(cfg.clone()), Arc::new(player_svc));
         let router = build_router(state, cfg.timeouts.quick);
 
-        Ok(Self { infra, cron_jobs, field_loader, uss_mapping_loader, flight_recorder, mem_stats_handle, oracle_monitor_stop, router, cfg })
+        Ok(Self {
+            infra,
+            cron_jobs,
+            field_loader,
+            uss_mapping_loader,
+            flight_recorder,
+            mem_stats_handle,
+            oracle_monitor_stop,
+            router,
+            cfg,
+        })
     }
 
     /// Graceful shutdown in reverse dependency order.
@@ -227,24 +235,19 @@ async fn main() -> anyhow::Result<()> {
     info!("═══════════════════════════════════════════════════");
     info!("  UCS-FE  (Rust/Axum)");
     info!("  listening on  http://{}", addr);
-    info!("  metrics       http://{}/metrics",  addr);
+    info!("  metrics       http://{}/metrics", addr);
     info!("  swagger       http://{}/swagger/", addr);
-    info!("  liveness      http://{}/livez",    addr);
-    info!("  readiness     http://{}/readyz",   addr);
+    info!("  liveness      http://{}/livez", addr);
+    info!("  readiness     http://{}/readyz", addr);
     info!("═══════════════════════════════════════════════════");
 
     // ── Serve with graceful shutdown ─────────────────────────────────────────
     // `into_make_service_with_connect_info` injects `ConnectInfo<SocketAddr>`
     // into every request, which tower-governor's key extractors may need as
     // a fallback when proxy headers are absent.
-    axum::serve(
-        listener,
-        app.router
-            .clone()
-            .into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    axum::serve(listener, app.router.clone().into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     let timeout = std::time::Duration::from_secs(app.cfg.shutdown_timeout);
     if tokio::time::timeout(timeout, app.shutdown()).await.is_err() {
@@ -260,9 +263,7 @@ async fn main() -> anyhow::Result<()> {
 /// Mirrors Go's signal channel in `gracefulShutdown`.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl-C handler");
+        signal::ctrl_c().await.expect("failed to install Ctrl-C handler");
     };
 
     #[cfg(unix)]
