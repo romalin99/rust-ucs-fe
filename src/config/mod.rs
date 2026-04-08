@@ -464,10 +464,11 @@ impl AppConfig {
                     "addr_connect_stringer" | "connect_string" => cfg.oracle.connect_string = v,
                     _ => {}
                 },
-                "redis" => match key.as_str() {
-                    "password" => cfg.redis.password = v,
-                    _ => {}
-                },
+                "redis" => {
+                    if key.as_str() == "password" {
+                        cfg.redis.password = v
+                    }
+                }
                 "log" => match key.as_str() {
                     "level" => cfg.log.level = v,
                     "encoding" => cfg.log.encoding = v,

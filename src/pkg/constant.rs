@@ -1,9 +1,9 @@
-/// Shared constants.
-///
-/// Full port of Go's `pkg/constant/constant.go`.
-///
-/// Used across services, middleware, and handlers for consistent key names,
-/// limits, and sort directions.
+//! Shared constants.
+//!
+//! Full port of Go's `pkg/constant/constant.go`.
+//!
+//! Used across services, middleware, and handlers for consistent key names,
+//! limits, and sort directions.
 
 // ── Context / span key names ──────────────────────────────────────────────────
 

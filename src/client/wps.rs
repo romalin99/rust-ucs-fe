@@ -143,7 +143,7 @@ impl WpsClient {
 
         tracing::info!(url = %url, merchant = merchant_code, "[WPSClient] GetResetPasswordStatus");
 
-        let body = self.do_get_with_retry(&url, merchant_code).await.map_err(|e| {
+        let body = self.do_get_with_retry(url, merchant_code).await.map_err(|e| {
             tracing::warn!(
                 merchant = merchant_code,
                 elapsed_ms = start.elapsed().as_millis(),
@@ -255,12 +255,12 @@ async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
         .into());
     }
 
-    if let Some(cl) = resp.content_length() {
-        if cl > MAX_RESPONSE_SIZE as u64 {
-            return Err(anyhow::anyhow!(
-                "WPS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
-            ));
-        }
+    if let Some(cl) = resp.content_length()
+        && cl > MAX_RESPONSE_SIZE as u64
+    {
+        return Err(anyhow::anyhow!(
+            "WPS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+        ));
     }
 
     let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;

@@ -33,13 +33,13 @@ where
 {
     tokio::spawn(async move {
         let result = tokio::spawn(fut).await;
-        if let Err(e) = result {
-            if e.is_panic() {
-                let bt = std::backtrace::Backtrace::force_capture();
-                tracing::error!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
-                eprintln!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
-                crate::pkg::logs::flush();
-            }
+        if let Err(e) = result
+            && e.is_panic()
+        {
+            let bt = std::backtrace::Backtrace::force_capture();
+            tracing::error!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
+            eprintln!("[spawn_safe] goroutine panic: {e}\nstack backtrace:\n{bt}");
+            crate::pkg::logs::flush();
         }
     })
 }

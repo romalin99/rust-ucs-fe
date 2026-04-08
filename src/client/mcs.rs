@@ -429,7 +429,7 @@ impl McsClient {
         );
 
         let resp_body = self
-            .player_post(&url, headers, body_bytes)
+            .player_post(url, headers, body_bytes)
             .await
             .map_err(|e| {
                 tracing::warn!(
@@ -475,12 +475,12 @@ async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
         anyhow::bail!("status {}: {}", status.as_u16(), snippet_str);
     }
 
-    if let Some(cl) = resp.content_length() {
-        if cl > MAX_RESPONSE_SIZE as u64 {
-            return Err(anyhow::anyhow!(
-                "MCS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
-            ));
-        }
+    if let Some(cl) = resp.content_length()
+        && cl > MAX_RESPONSE_SIZE as u64
+    {
+        return Err(anyhow::anyhow!(
+            "MCS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+        ));
     }
 
     let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;

@@ -101,7 +101,7 @@ impl FieldIdUssMappingRepository {
                 let conn = pool.get().context("Oracle pool: get connection")?;
 
                 let mut stmt = conn
-                    .statement(&*SQL_FIND_ALL)
+                    .statement(&SQL_FIND_ALL)
                     .prefetch_rows(super::DEFAULT_PREFETCH_ROWS)
                     .fetch_array_size(super::DEFAULT_FETCH_ARRAY_SIZE)
                     .build()
@@ -162,8 +162,8 @@ impl FieldIdUssMappingRepository {
             timeout,
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
-                let rows = conn.query(&*SQL_FIND_ONE, &[&id]).context("find_one query")?;
-                for row_result in rows {
+                let mut rows = conn.query(&SQL_FIND_ONE, &[&id]).context("find_one query")?;
+                if let Some(row_result) = rows.next() {
                     let row = row_result.context("read row")?;
                     return Ok(Some(Self::map_row(&row)?));
                 }
@@ -196,8 +196,8 @@ impl FieldIdUssMappingRepository {
                     "SELECT {} FROM TCG_UCS.FIELD_ID_USS_MAPPING WHERE ID = :1 FOR UPDATE WAIT {}",
                     COLUMNS, lock_wait
                 );
-                let rows = conn.query(&sql, &[&id]).context("find_one_for_update query")?;
-                for row_result in rows {
+                let mut rows = conn.query(&sql, &[&id]).context("find_one_for_update query")?;
+                if let Some(row_result) = rows.next() {
                     let row = row_result.context("read row")?;
                     let m = Self::map_row(&row)?;
                     return Ok(Some((m, conn)));
@@ -225,10 +225,10 @@ impl FieldIdUssMappingRepository {
             timeout,
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
-                let rows = conn
-                    .query(&*SQL_FIND_BY_FIELD_MCS, &[&fid, &mcs_id])
+                let mut rows = conn
+                    .query(&SQL_FIND_BY_FIELD_MCS, &[&fid, &mcs_id])
                     .context("find_by_field_mcs query")?;
-                for row_result in rows {
+                if let Some(row_result) = rows.next() {
                     let row = row_result.context("read row")?;
                     return Ok(Some(Self::map_row(&row)?));
                 }
@@ -255,10 +255,10 @@ impl FieldIdUssMappingRepository {
             timeout,
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
-                let rows = conn
-                    .query(&*SQL_FIND_BY_FIELD_USS, &[&fid, &uss_id])
+                let mut rows = conn
+                    .query(&SQL_FIND_BY_FIELD_USS, &[&fid, &uss_id])
                     .context("find_by_field_uss query")?;
-                for row_result in rows {
+                if let Some(row_result) = rows.next() {
                     let row = row_result.context("read row")?;
                     return Ok(Some(Self::map_row(&row)?));
                 }
@@ -282,7 +282,7 @@ impl FieldIdUssMappingRepository {
             tokio::task::spawn_blocking(move || {
                 let conn = pool.get().context("Oracle pool: get connection")?;
                 let rows = conn
-                    .query(&*SQL_FIND_LIST_BY_FIELD, &[&fid])
+                    .query(&SQL_FIND_LIST_BY_FIELD, &[&fid])
                     .context("find_list_by_field_id query")?;
                 let mut list = Vec::new();
                 for row_result in rows {

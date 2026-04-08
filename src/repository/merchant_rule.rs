@@ -281,9 +281,9 @@ impl MerchantRuleRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql = &*SQL_FIND_BY_MC;
 
-            let rows = conn.query(&sql, &[&mc]).context("MerchantRule query")?;
+            let mut rows = conn.query(sql, &[&mc]).context("MerchantRule query")?;
 
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("MerchantRule row read")?;
                 return Ok(Some(Self::map_full_row(row)?));
             }
@@ -312,10 +312,10 @@ impl MerchantRuleRepository {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql = &*SQL_FIND_BY_MC_DEFAULT;
 
-            let rows =
-                conn.query(&sql, &[&mc, &is_default]).context("MerchantRule+default query")?;
+            let mut rows =
+                conn.query(sql, &[&mc, &is_default]).context("MerchantRule+default query")?;
 
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("MerchantRule row read")?;
                 return Ok(Some(Self::map_full_row(row)?));
             }
@@ -346,9 +346,9 @@ impl MerchantRuleRepository {
                               QUESTIONS, FIELD_TRANSLATIONS \
                        FROM TCG_UCS.MERCHANT_RULE WHERE MERCHANT_CODE = :1";
 
-            let rows = conn.query(sql, &[&mc]).context("get_rule_config query")?;
+            let mut rows = conn.query(sql, &[&mc]).context("get_rule_config query")?;
 
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("get_rule_config row read")?;
                 let questions_clob: Option<String> =
                     row.get::<_, Option<String>>(4).unwrap_or(None);
@@ -620,8 +620,8 @@ impl MerchantRuleRepository {
         let blocking = tokio::task::spawn_blocking(move || {
             let conn = pool.get().context("Oracle pool: get connection")?;
             let sql = &*SQL_FIND_ONE;
-            let rows = conn.query(&sql, &[&id]).context("FindOne query")?;
-            for row_result in rows {
+            let mut rows = conn.query(sql, &[&id]).context("FindOne query")?;
+            if let Some(row_result) = rows.next() {
                 return Ok(Some(Self::map_rule_row(row_result.context("FindOne row")?)?));
             }
             Ok(None)
@@ -825,9 +825,9 @@ impl MerchantRuleRepository {
                 "SELECT {} FROM TCG_UCS.MERCHANT_RULE WHERE ID = :1 FOR UPDATE WAIT {}",
                 RULE_COLS_FULL, lock_timeout_secs
             );
-            let rows = conn.query(&sql, &[&id]).context("FindOneForUpdate query")?;
+            let mut rows = conn.query(&sql, &[&id]).context("FindOneForUpdate query")?;
 
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("FindOneForUpdate row read")?;
                 let rule = Self::map_full_row(row)?;
                 return Ok((rule, conn));
@@ -869,10 +869,10 @@ impl MerchantRuleRepository {
 
             let param_refs: Vec<&dyn oracle::sql_type::ToSql> =
                 params.iter().map(|p| p.as_ref() as &dyn oracle::sql_type::ToSql).collect();
-            let rows =
+            let mut rows =
                 conn.query(&sql, param_refs.as_slice()).context("FindOnlyByExpression query")?;
 
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("FindOnlyByExpression row read")?;
                 return Ok(Some(Self::map_full_row(row)?));
             }

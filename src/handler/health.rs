@@ -318,14 +318,14 @@ async fn handle_upload(req: Request, allowed_exts: Option<&[&str]>) -> Response 
         .map(|e| format!(".{}", e.to_lowercase()))
         .unwrap_or_default();
 
-    if let Some(allowed) = allowed_exts {
-        if !allowed.contains(&ext.as_str()) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "code": 400, "message": "file type not allowed" })),
-            )
-                .into_response();
-        }
+    if let Some(allowed) = allowed_exts
+        && !allowed.contains(&ext.as_str())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "code": 400, "message": "file type not allowed" })),
+        )
+            .into_response();
     }
 
     // 5. Build save path and persist.

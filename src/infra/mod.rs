@@ -271,7 +271,7 @@ impl AppInfra {
         );
         // Warm up connections in parallel so concurrent startup loaders each
         // get a pre-warmed connection.  Cap at 8 to avoid slow startup.
-        let warm_count = (pool_min as usize).min(8).max(2);
+        let warm_count = (pool_min as usize).clamp(2, 8);
         ping_pool(oracle_pool.clone(), warm_count).await;
 
         // ── Redis ─────────────────────────────────────────────────────────────

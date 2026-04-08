@@ -165,7 +165,7 @@ impl PlayerVerificationService {
                 self.merchant_repo
                     .find_by_merchant_code(merchant_code)
                     .await
-                    .map_err(|e| AppError::Internal(e))
+                    .map_err(AppError::Internal)
             },
             async {
                 let v: Option<i64> = redis::AsyncCommands::get(&mut c1, &ip_k_r)
@@ -348,7 +348,7 @@ impl PlayerVerificationService {
         let one_time_passwd = token_resp.value.clone();
 
         let rule_cfg = rule_result
-            .map_err(|e| AppError::Internal(e))?
+            .map_err(AppError::Internal)?
             .ok_or_else(|| AppError::MerchantNotFound(merchant_code.to_string()))?;
 
         tracing::info!(merchant_code, elapsed_ms = %t_phase1.elapsed().as_millis(), "Phase 1 (customer + token + rule-config) complete");

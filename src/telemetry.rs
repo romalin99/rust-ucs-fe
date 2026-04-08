@@ -130,15 +130,15 @@ fn init_buffered_writer(cfg: &LogConfig) -> BufferedStdout {
 ///
 /// Safe to call from any thread; no-op before `init_tracing`.
 pub fn flush_log_buf() {
-    if let Some(buf) = LOG_BUF.get() {
-        if let Ok(mut w) = buf.lock() {
-            let _ = w.flush();
-        }
+    if let Some(buf) = LOG_BUF.get()
+        && let Ok(mut w) = buf.lock()
+    {
+        let _ = w.flush();
     }
-    if let Some(buf) = BEHAVIOR_BUF.get() {
-        if let Ok(mut w) = buf.lock() {
-            let _ = w.flush();
-        }
+    if let Some(buf) = BEHAVIOR_BUF.get()
+        && let Ok(mut w) = buf.lock()
+    {
+        let _ = w.flush();
     }
 }
 
@@ -147,15 +147,15 @@ pub fn flush_log_buf() {
 /// Suitable for signal handlers and `atexit` where the mutex may already
 /// be held by the thread that triggered the exit.
 fn flush_log_buf_nonblocking() {
-    if let Some(buf) = LOG_BUF.get() {
-        if let Ok(mut w) = buf.try_lock() {
-            let _ = w.flush();
-        }
+    if let Some(buf) = LOG_BUF.get()
+        && let Ok(mut w) = buf.try_lock()
+    {
+        let _ = w.flush();
     }
-    if let Some(buf) = BEHAVIOR_BUF.get() {
-        if let Ok(mut w) = buf.try_lock() {
-            let _ = w.flush();
-        }
+    if let Some(buf) = BEHAVIOR_BUF.get()
+        && let Ok(mut w) = buf.try_lock()
+    {
+        let _ = w.flush();
     }
 }
 

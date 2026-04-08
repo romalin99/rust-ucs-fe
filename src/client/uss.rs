@@ -234,7 +234,7 @@ impl<'de> Deserialize<'de> for NullString {
 /// Go's `NullInt32.UnmarshalJSON(null)` sets `Val = -1, Valid = false`.
 /// `#[serde(default)]` (absent key) uses `Default` → `{val: 0, valid: false}` (Go zero-value).
 /// Explicit JSON `null` goes through `Deserialize` → `{val: -1, valid: false}`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NullInt32 {
     pub val: i32,
     pub valid: bool,
@@ -243,15 +243,6 @@ pub struct NullInt32 {
 impl serde::Serialize for NullInt32 {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if self.valid { serializer.serialize_i32(self.val) } else { serializer.serialize_none() }
-    }
-}
-
-impl Default for NullInt32 {
-    fn default() -> Self {
-        Self {
-            val: 0,
-            valid: false,
-        }
     }
 }
 
@@ -1015,7 +1006,7 @@ impl UssClient {
         let body = self
             .do_with_retry(|| {
                 let b = body_bytes.clone();
-                self.do_put_bytes(&url, b)
+                self.do_put_bytes(url, b)
             })
             .await
             .map_err(|e| {
@@ -1069,12 +1060,12 @@ async fn read_body(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
         .into());
     }
 
-    if let Some(cl) = resp.content_length() {
-        if cl > MAX_RESPONSE_SIZE as u64 {
-            return Err(anyhow::anyhow!(
-                "USS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
-            ));
-        }
+    if let Some(cl) = resp.content_length()
+        && cl > MAX_RESPONSE_SIZE as u64
+    {
+        return Err(anyhow::anyhow!(
+            "USS response too large: content-length={cl}, max={MAX_RESPONSE_SIZE}"
+        ));
     }
 
     let buf = stream_read_up_to(&mut resp, MAX_RESPONSE_SIZE).await;

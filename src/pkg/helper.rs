@@ -1,10 +1,10 @@
-/// Decimal / numeric helper utilities.
-///
-/// Partial port of Go's `pkg/helper/decimal_helper.go`.
-///
-/// Go's helper heavily depends on `godror.Number` (Oracle-specific) and
-/// `bson.Decimal128` (MongoDB-specific) which are not used in the Rust port.
-/// This module provides the general-purpose numeric helpers in idiomatic Rust.
+//! Decimal / numeric helper utilities.
+//!
+//! Partial port of Go's `pkg/helper/decimal_helper.go`.
+//!
+//! Go's helper heavily depends on `godror.Number` (Oracle-specific) and
+//! `bson.Decimal128` (MongoDB-specific) which are not used in the Rust port.
+//! This module provides the general-purpose numeric helpers in idiomatic Rust.
 
 /// Round a `f64` value to N decimal places.
 ///

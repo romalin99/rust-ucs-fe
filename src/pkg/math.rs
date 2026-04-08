@@ -1,6 +1,6 @@
-/// Math utility functions.
-///
-/// Full port of Go's `pkg/math/round.go`.
+//! Math utility functions.
+//!
+//! Full port of Go's `pkg/math/round.go`.
 
 /// Round a float to 2 decimal places.
 ///

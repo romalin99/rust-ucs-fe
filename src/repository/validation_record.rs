@@ -223,8 +223,8 @@ impl ValidationRecordRepository {
                        ORDER BY CREATED_AT DESC \
                        FETCH FIRST 1 ROWS ONLY";
 
-            let rows = conn.query(sql, &[&customer_id, &mc]).context("FindLatest query")?;
-            for row_result in rows {
+            let mut rows = conn.query(sql, &[&customer_id, &mc]).context("FindLatest query")?;
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("FindLatest row read")?;
                 let created_at: NaiveDateTime = row
                     .get::<_, Option<NaiveDateTime>>(9)
@@ -450,10 +450,10 @@ impl ValidationRecordRepository {
                           AND SUCCESS       = 0 \
                           AND CREATED_AT   >= TO_TIMESTAMP(:3, 'YYYY-MM-DD HH24:MI:SS')";
 
-            let rows = conn
+            let mut rows = conn
                 .query(sql, &[&customer_id, &mc, &since_str])
                 .context("CountFailSince query")?;
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("CountFailSince row read")?;
                 let cnt: i64 = row.get(0).context("COUNT")?;
                 return Ok(cnt);
@@ -492,8 +492,8 @@ impl ValidationRecordRepository {
                        WHERE CUSTOMER_ID = :1 AND MERCHANT_CODE = :2 \
                        GROUP BY CUSTOMER_ID, MERCHANT_CODE";
 
-            let rows = conn.query(sql, &[&customer_id, &mc]).context("GetSummary query")?;
-            for row_result in rows {
+            let mut rows = conn.query(sql, &[&customer_id, &mc]).context("GetSummary query")?;
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("GetSummary row read")?;
                 let summary = ValidationSummary {
                     customer_id: row.get::<_, i64>(0).context("CUSTOMER_ID")?,
@@ -543,8 +543,8 @@ impl ValidationRecordRepository {
                          AND CREATED_AT >= TO_TIMESTAMP(:2, 'YYYY-MM-DD HH24:MI:SS') \
                        GROUP BY IP";
 
-            let rows = conn.query(sql, &[&ip_str, &since_str]).context("GetIpStats query")?;
-            for row_result in rows {
+            let mut rows = conn.query(sql, &[&ip_str, &since_str]).context("GetIpStats query")?;
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("GetIpStats row read")?;
                 let stats = ValidationIpStats {
                     ip: row.get::<_, String>(0).context("IP")?,
@@ -664,9 +664,9 @@ impl ValidationRecordRepository {
                        WHERE CREATED_AT >= TO_TIMESTAMP(:1, 'YYYY-MM-DD HH24:MI:SS') \
                          AND CREATED_AT <  TO_TIMESTAMP(:2, 'YYYY-MM-DD HH24:MI:SS')";
 
-            let rows =
+            let mut rows =
                 conn.query(sql, &[&start_str, &end_str]).context("GetCountByTimeRange query")?;
-            for row_result in rows {
+            if let Some(row_result) = rows.next() {
                 let row = row_result.context("GetCountByTimeRange row read")?;
                 let cnt: i64 = row.get(0).context("COUNT")?;
                 return Ok(cnt);

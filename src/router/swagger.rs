@@ -51,10 +51,10 @@ pub fn register(router: Router, port: u16) -> Router {
 ///   3. First non-loopback IPv4 from `net.InterfaceAddrs()`
 ///   4. `"localhost"` fallback
 pub fn resolve_host() -> String {
-    if let Ok(env_host) = std::env::var("SWAGGER_HOST") {
-        if !env_host.is_empty() {
-            return env_host;
-        }
+    if let Ok(env_host) = std::env::var("SWAGGER_HOST")
+        && !env_host.is_empty()
+    {
+        return env_host;
     }
 
     if let Some(ip) = get_outbound_ip() {

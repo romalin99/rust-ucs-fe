@@ -1,95 +1,96 @@
-# ─────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────────────────────── #
 # ucs-fe — cargo-make task file
 # https://github.com/sagiegurari/cargo-make
 #
 # Usage:
-#   ── DEFAULT ──────────────────────────────────────────────────────────────
-#   cargo make                      # fmt-check → debug build (default)
-#   cargo make help                 # list all available tasks
+# ── DEFAULT ──────────────────────────────────────────────────────────────
+# cargo make                  # fmt-check → debug build (default)
+# cargo make help             # list all available tasks
 #
-#   ── BUILD ────────────────────────────────────────────────────────────────
-#   cargo make build                # compile debug binary
-#   cargo make debug                # alias for build
-#   cargo make release              # compile release binary (--locked)
-#   cargo make build-all            # compile ALL targets (debug)
-#   cargo make release-all          # compile ALL targets (release, --locked)
+# ── BUILD ────────────────────────────────────────────────────────────────
+# cargo make build            # compile debug binary
+# cargo make debug            # alias for build
+# cargo make release          # compile release binary (--locked)
+# cargo make build-all        # compile ALL targets (debug)
+# cargo make release-all      # compile ALL targets (release, --locked)
 #
-#   ── RUN ──────────────────────────────────────────────────────────────────
-#   cargo make run                  # debug build → run (ENV=dev)
-#   cargo make run-release          # release build → run
-#   cargo make run-dev              # run with ENV=dev
-#   cargo make run-sit              # run with ENV=sit
-#   cargo make run-prod             # run with ENV=prod (caution)
-#   cargo make ENV=sit run          # override ENV inline
+# ── RUN ──────────────────────────────────────────────────────────────────
+# cargo make run              # debug build → run (ENV=dev)
+# cargo make run-release      # release build → run
+# cargo make run-dev          # run with ENV=dev
+# cargo make run-sit          # run with ENV=sit
+# cargo make run-prod         # run with ENV=prod (caution)
 #
-#   ── CODE QUALITY ─────────────────────────────────────────────────────────
-#   cargo make fmt                  # format all source files
-#   cargo make fmt-check            # check formatting (CI)
-#   cargo make clippy               # run Clippy linter (deny warnings)
-#   cargo make lint                 # alias for clippy
-#   cargo make clippy-fix           # auto-apply Clippy fixes
-#   cargo make optimize             # clippy-fix → fmt
-#   cargo make check                # fast cargo check (no codegen)
+# ── CODE QUALITY ─────────────────────────────────────────────────────────
+# cargo make fmt              # format all source files
+# cargo make fmt-check        # check formatting (CI)
+# cargo make clippy           # run Clippy linter (deny warnings)
+# cargo make lint             # alias for clippy
+# cargo make clippy-fix       # auto-apply Clippy fixes
+# cargo make optimize         # clippy-fix → fmt
+# cargo make check            # fast cargo check
 #
-#   ── TESTS ────────────────────────────────────────────────────────────────
-#   cargo make test                 # run all tests (--all-targets --locked)
-#   cargo make testv                # run tests with stdout visible
-#   cargo make test-release         # run tests in release mode
-#   cargo make nextest              # run tests with cargo-nextest
-#   cargo make bench                # run benchmarks
-#   cargo make cover                # generate HTML coverage report
+# ── TESTS ────────────────────────────────────────────────────────────────
+# cargo make test             # run all tests (--all-targets --locked)
+# cargo make testv            # run tests with stdout visible
+# cargo make test-release     # run tests in release mode
+# cargo make nextest          # run tests with cargo-nextest
+# cargo make bench            # run benchmarks
+# cargo make cover            # generate HTML coverage report
 #
-#   ── DOCS ─────────────────────────────────────────────────────────────────
-#   cargo make doc                  # build docs (private items) + open
-#   cargo make doc-check            # build docs without opening (CI)
+# ── DOCS ─────────────────────────────────────────────────────────────────
+# cargo make doc              # build docs (private items) + open
+# cargo make doc-check        # build docs without opening (CI)
 #
-#   ── SECURITY & DEPENDENCIES ──────────────────────────────────────────────
-#   cargo make audit                # check CVEs in dependencies
-#   cargo make outdated             # list outdated dependencies
-#   cargo make udeps                # detect unused dependencies (nightly)
-#   cargo make update               # update Cargo.lock
-#   cargo make upgrade              # upgrade Cargo.toml constraints
-#   cargo make update-toolchain     # rustup update + cargo update
+# ── SECURITY & DEPENDENCIES ──────────────────────────────────────────────
+# cargo make audit            # check CVEs in dependencies
+# cargo make deny             # run all cargo-deny checks (advisories + bans + licenses + sources)
+# cargo make deny-init        # initialize deny.toml template
+# cargo make outdated         # list outdated dependencies
+# cargo make udeps            # detect unused dependencies (nightly)
+# cargo make update           # update Cargo.lock
+# cargo make upgrade          # upgrade Cargo.toml constraints
+# cargo make update-toolchain # rustup update + cargo update
 #
-#   ── DATABASE MIGRATIONS ──────────────────────────────────────────────────
-#   cargo make migrate              # run pending migrations (sqlx)
-#   cargo make migrate-revert       # revert last migration (sqlx)
+# ── DATABASE MIGRATIONS ──────────────────────────────────────────────────
+# cargo make migrate          # run pending migrations (sqlx)
+# cargo make migrate-revert   # revert last migration (sqlx)
 #
-#   ── WATCH ────────────────────────────────────────────────────────────────
-#   cargo make watch                # recompile on file changes
-#   cargo make watch-run            # recompile + restart on file changes
-#   cargo make watch-test           # re-run tests on file changes
-#   cargo make watch-check          # re-run cargo check on file changes
+# ── WATCH ────────────────────────────────────────────────────────────────
+# cargo make watch            # recompile on file changes
+# cargo make watch-run        # recompile + restart on file changes
+# cargo make watch-test       # re-run tests on file changes
+# cargo make watch-check      # re-run cargo check on file changes
 #
-#   ── CLEAN ────────────────────────────────────────────────────────────────
-#   cargo make clean                # remove target/
-#   cargo make dist-clean           # remove target/ + Cargo.lock
+# ── CLEAN ────────────────────────────────────────────────────────────────
+# cargo make clean            # remove target/
+# cargo make dist-clean       # remove target/ + Cargo.lock
 #
-#   ── CI ───────────────────────────────────────────────────────────────────
-#   cargo make ci                   # fmt-check → clippy → test
-#   cargo make ci-full              # fmt-check → clippy → test → audit → doc-check
+# ── CI ───────────────────────────────────────────────────────────────────
+# cargo make ci               # fmt-check → clippy → test
+# cargo make ci-security      # audit + deny (security only)
+# cargo make ci-full          # fmt-check → clippy → test → audit → deny → doc-check
 #
-#   ── DOCKER ───────────────────────────────────────────────────────────────
-#   cargo make docker-build         # docker build -t <APP>:<ENV> .
-#   cargo make docker-run           # docker run -p 8080:8080 --env-file .env
+# ── DOCKER ───────────────────────────────────────────────────────────────
+# cargo make docker-build     # docker build -t : .
+# cargo make docker-run       # docker run -p 8080:8080 --env-file .env
 #
-#   ── STATISTICS ───────────────────────────────────────────────────────────
-#   cargo make stats                # lines-of-code summary
-#   cargo make stats-detail         # per-file lines-of-code
-#   cargo make status               # alias for stats
+# ── STATISTICS ───────────────────────────────────────────────────────────
+# cargo make stats            # lines-of-code summary
+# cargo make stats-detail     # per-file lines-of-code
+# cargo make status           # alias for stats
 #
-#   ── SETUP ────────────────────────────────────────────────────────────────
-#   cargo make install              # install all recommended cargo tools
-#   cargo make version              # print Rust toolchain versions
+# ── SETUP ────────────────────────────────────────────────────────────────
+# cargo make install          # install all recommended cargo tools
+# cargo make version          # print Rust toolchain versions
 # ─────────────────────────────────────────────────────────────────────────────
 
 [config]
 default_to_workspace = false
-skip_core_tasks      = false
-min_version          = "0.37.0"
+skip_core_tasks = false
+min_version = "0.37.0"
 
 # ── Project-wide environment variables ───────────────────────────────────────
-
 [env]
 APP = "ucs-fe"
 ENV = { value = "dev", condition = { env_not_set = ["ENV"] } }
@@ -98,217 +99,217 @@ CARGO_MAKE_DEFAULT_TASK_NAME = "default"
 # ─────────────────────────────────────────────────────────────────────────────
 # DEFAULT
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.default]
-description  = "Format-check then compile (debug). Run `cargo make help` for all tasks."
+description = "Format-check then compile (debug). Run `cargo make help` for all tasks."
 dependencies = ["fmt-check", "build"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELP
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.help]
 description = "List all available tasks with their descriptions."
-script = [
-    "cargo make --list-all-steps 2>/dev/null | grep -E '^[a-z]' | sort || cargo make --list-all-steps",
-]
+script = [  "cargo make --list-all-steps 2>/dev/null | grep -E '^[a-z]' | sort || cargo make --list-all-steps",]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SETUP — install development toolchain extras
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.install]
 description = "Install all recommended cargo add-on tools."
 dependencies = [
-    "install-cargo-watch",
-    "install-cargo-edit",
-    "install-cargo-outdated",
-    "install-cargo-audit",
-    "install-cargo-tarpaulin",
-    "install-cargo-nextest",
-    "install-cargo-udeps",
-    "install-sqlx",
-    "install-tokei",
+  "install-cargo-watch",
+  "install-cargo-edit",
+  "install-cargo-outdated",
+  "install-cargo-audit",
+  "install-cargo-deny",
+  "install-cargo-tarpaulin",
+  "install-cargo-nextest",
+  "install-cargo-udeps",
+  "install-sqlx",
+  "install-tokei",
 ]
 
 [tasks.install-cargo-watch]
 description = "Install cargo-watch (live-reload on file changes)."
-command     = "cargo"
-args        = ["install", "cargo-watch", "--locked"]
+command = "cargo"
+args = ["install", "cargo-watch", "--locked"]
 
 [tasks.install-cargo-edit]
 description = "Install cargo-edit (cargo add / cargo upgrade)."
-command     = "cargo"
-args        = ["install", "cargo-edit", "--locked"]
+command = "cargo"
+args = ["install", "cargo-edit", "--locked"]
 
 [tasks.install-cargo-outdated]
 description = "Install cargo-outdated (check for stale dependencies)."
-command     = "cargo"
-args        = ["install", "cargo-outdated", "--locked"]
+command = "cargo"
+args = ["install", "cargo-outdated", "--locked"]
 
 [tasks.install-cargo-audit]
 description = "Install cargo-audit (check for CVEs in dependencies)."
-command     = "cargo"
-args        = ["install", "cargo-audit", "--locked"]
+command = "cargo"
+args = ["install", "cargo-audit", "--locked"]
+
+[tasks.install-cargo-deny]
+description = "Install cargo-deny (supply chain security: licenses, bans, advisories, sources)."
+command = "cargo"
+args = ["install", "cargo-deny", "--locked"]
 
 [tasks.install-cargo-tarpaulin]
 description = "Install cargo-tarpaulin (code-coverage report)."
-command     = "cargo"
-args        = ["install", "cargo-tarpaulin", "--locked"]
+command = "cargo"
+args = ["install", "cargo-tarpaulin", "--locked"]
 
 [tasks.install-cargo-nextest]
 description = "Install cargo-nextest (faster, richer test runner)."
-command     = "cargo"
-args        = ["install", "cargo-nextest", "--locked"]
+command = "cargo"
+args = ["install", "cargo-nextest", "--locked"]
 
 [tasks.install-cargo-udeps]
 description = "Install cargo-udeps (detect unused dependencies, requires nightly)."
-command     = "cargo"
-args        = ["install", "cargo-udeps", "--locked"]
+command = "cargo"
+args = ["install", "cargo-udeps", "--locked"]
 
 [tasks.install-sqlx]
 description = "Install sqlx-cli (database migration management)."
-command     = "cargo"
-args        = ["install", "sqlx-cli", "--locked"]
+command = "cargo"
+args = ["install", "sqlx-cli", "--locked"]
 
 [tasks.install-tokei]
 description = "Install tokei (lines-of-code statistics)."
-command     = "cargo"
-args        = ["install", "tokei", "--locked"]
+command = "cargo"
+args = ["install", "tokei", "--locked"]
 
+[tasks.security]
+description = "Full dependency security check."
+dependencies = ["audit", "deny"]
 # ─────────────────────────────────────────────────────────────────────────────
 # VERSION
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.version]
 description = "Print Rust toolchain version (mirrors Go `make version`)."
-script = [
-    "rustc  --version",
-    "cargo  --version",
-    "rustup --version",
-]
+script = [  "rustc --version",  "cargo --version",  "rustup --version",]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.build]
 description = "Compile debug binary (fast iteration build)."
-command     = "cargo"
-args        = ["build", "--bin", "${APP}"]
+command = "cargo"
+args = ["build", "--bin", "${APP}"]
 
 [tasks.debug]
 description = "Alias for `build` — compile debug binary with full debug info."
-alias       = "build"
+alias = "build"
 
 [tasks.release]
 description = "Compile optimised release binary (stripped, fast, locked)."
-command     = "cargo"
-args        = ["build", "--release", "--bin", "${APP}", "--locked"]
+command = "cargo"
+args = ["build", "--release", "--bin", "${APP}", "--locked"]
 
 [tasks.build-all]
 description = "Compile ALL targets (bins, examples, tests, benches) in debug mode."
-command     = "cargo"
-args        = ["build", "--all-targets"]
+command = "cargo"
+args = ["build", "--all-targets"]
 
 [tasks.release-all]
 description = "Compile ALL targets in release mode (locked)."
-command     = "cargo"
-args        = ["build", "--release", "--all-targets", "--locked"]
+command = "cargo"
+args = ["build", "--release", "--all-targets", "--locked"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STATISTICS — project metrics (requires tokei)
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.stats]
-description   = "Show project lines-of-code statistics (auto-installs tokei)."
+description = "Show project lines-of-code statistics (auto-installs tokei)."
 install_crate = "tokei"
-command       = "tokei"
-args          = ["--sort", "code"]
+command = "tokei"
+args = ["--sort", "code"]
 
 [tasks.stats-detail]
-description   = "Per-file lines-of-code breakdown."
+description = "Per-file lines-of-code breakdown."
 install_crate = "tokei"
-command       = "tokei"
-args          = ["--files", "--sort", "code"]
+command = "tokei"
+args = ["--files", "--sort", "code"]
 
 [tasks.status]
 description = "Alias for `stats`."
-alias       = "stats"
+alias = "stats"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.run]
-description  = "Build debug binary and run the service. ENV defaults to 'dev'."
+description = "Build debug binary and run the service. ENV defaults to 'dev'."
 dependencies = ["build"]
-command      = "cargo"
-args         = ["run", "--bin", "${APP}"]
+command = "cargo"
+args = ["run", "--bin", "${APP}"]
+
 [tasks.run.env]
 ENV = "${ENV}"
 
 [tasks.run-release]
-description  = "Build release binary and run the service."
+description = "Build release binary and run the service."
 dependencies = ["release"]
-command      = "cargo"
-args         = ["run", "--release", "--bin", "${APP}"]
+command = "cargo"
+args = ["run", "--release", "--bin", "${APP}"]
+
 [tasks.run-release.env]
 ENV = "${ENV}"
 
 [tasks.run-dev]
 description = "Run with ENV=dev (development config)."
-command     = "cargo"
-args        = ["run", "--bin", "${APP}"]
+command = "cargo"
+args = ["run", "--bin", "${APP}"]
+
 [tasks.run-dev.env]
 ENV = "dev"
 
 [tasks.run-sit]
 description = "Run with ENV=sit (SIT config)."
-command     = "cargo"
-args        = ["run", "--bin", "${APP}"]
+command = "cargo"
+args = ["run", "--bin", "${APP}"]
+
 [tasks.run-sit.env]
 ENV = "sit"
 
 [tasks.run-prod]
 description = "Run with ENV=prod (production config — use with caution)."
-command     = "cargo"
-args        = ["run", "--release", "--bin", "${APP}"]
+command = "cargo"
+args = ["run", "--release", "--bin", "${APP}"]
+
 [tasks.run-prod.env]
 ENV = "prod"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CODE QUALITY
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.check]
 description = "Run `cargo check` (fast, no codegen — mirrors Go `make check`)."
-command     = "cargo"
-args        = ["check", "--all-targets"]
+command = "cargo"
+args = ["check", "--all-targets"]
 
 [tasks.fmt]
 description = "Format all source files with rustfmt (mirrors Go `make fmt`)."
-command     = "cargo"
-args        = ["fmt", "--all"]
+command = "cargo"
+args = ["fmt", "--all"]
 
 [tasks.fmt-check]
 description = "Assert code is already formatted — fails in CI if not."
-command     = "cargo"
-args        = ["fmt", "--all", "--", "--check"]
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
 
 [tasks.clippy]
 description = "Run Clippy linter (deny warnings)."
-command     = "cargo"
-args        = ["clippy", "--all-targets", "--", "-D", "warnings"]
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings", "-W", "clippy::pedantic", "-W", "clippy::nursery"]
 
 [tasks.lint]
 description = "Alias for `clippy` — run Clippy linter (mirrors Go `make lint`)."
-alias       = "clippy"
+alias = "clippy"
 
 [tasks.clippy-fix]
-description = "Run Clippy and auto-apply fixes (deny warnings)."
-command     = "cargo"
-args        = ["clippy", "--all-targets", "--fix", "--allow-dirty", "--allow-staged", "--", "-D", "warnings"]
+description = "Run Clippy and auto-apply fixes (best-effort; does not fail on unfixable warnings)."
+command = "cargo"
+args = ["clippy", "--all-targets", "--fix", "--allow-dirty", "--allow-staged"]
 
 [tasks.optimize]
 description = "Auto-fix Clippy suggestions then reformat (mirrors Go `make optimize`)."
@@ -317,177 +318,186 @@ dependencies = ["clippy-fix", "fmt"]
 # ─────────────────────────────────────────────────────────────────────────────
 # TESTS
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.test]
 description = "Run all unit and integration tests (all targets, locked)."
-command     = "cargo"
-args        = ["test", "--all-targets", "--locked"]
+command = "cargo"
+args = ["test", "--all-targets", "--locked"]
 
 [tasks.testv]
 description = "Run all tests with output visible (mirrors Go `make testv`)."
-command     = "cargo"
-args        = ["test", "--all", "--", "--nocapture"]
+command = "cargo"
+args = ["test", "--all", "--", "--nocapture"]
 
 [tasks.test-release]
 description = "Run tests in release mode (catches optimisation-dependent bugs)."
-command     = "cargo"
-args        = ["test", "--release", "--all"]
+command = "cargo"
+args = ["test", "--release", "--all"]
 
 [tasks.nextest]
 description = "Run tests with cargo-nextest (faster, colour output). Requires install."
-command     = "cargo"
-args        = ["nextest", "run"]
+command = "cargo"
+args = ["nextest", "run"]
 
 [tasks.bench]
 description = "Run benchmarks (mirrors Go `make bench`)."
-command     = "cargo"
-args        = ["bench"]
+command = "cargo"
+args = ["bench"]
 
 [tasks.cover]
 description = "Generate HTML coverage report with tarpaulin (mirrors Go `make cover`)."
-command     = "cargo"
-args        = [
-    "tarpaulin",
-    "--all-features",
-    "--workspace",
-    "--timeout", "120",
-    "--out", "Html",
-    "--output-dir", "target/coverage",
-]
+command = "cargo"
+args = [  "tarpaulin",  "--all-features", "--workspace",  "--timeout", "120",  "--out", "Html",  "--output-dir", "target/coverage",]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOCS
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.doc]
 description = "Build rustdoc documentation (including private items) and open in browser."
-command     = "cargo"
-args        = ["doc", "--no-deps", "--open", "--document-private-items"]
+command = "cargo"
+args = ["doc", "--no-deps", "--open", "--document-private-items"]
 
 [tasks.doc-check]
 description = "Build docs without opening (CI-safe doc lint check)."
-command     = "cargo"
-args        = ["doc", "--no-deps"]
+command = "cargo"
+args = ["doc", "--no-deps"]
+
 [tasks.doc-check.env]
 RUSTDOCFLAGS = "-D warnings"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECURITY & DEPENDENCIES
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.audit]
 description = "Check dependencies for known CVEs (requires cargo-audit)."
-command     = "cargo"
-args        = ["audit"]
+command = "cargo"
+args = ["audit"]
+
+[tasks.deny-init]
+description = "Initialize deny.toml configuration template (run once)."
+command = "cargo"
+args = ["deny", "init"]
+
+[tasks.deny-advisories]
+description = "Check for security advisories and unmaintained crates."
+command = "cargo"
+args = ["deny", "check", "advisories"]
+
+[tasks.deny-bans]
+description = "Check for banned crates and multiple versions of the same crate."
+command = "cargo"
+args = ["deny", "check", "bans"]
+
+[tasks.deny-licenses]
+description = "Check that all dependency licenses are allowed (configure in deny.toml)."
+command = "cargo"
+args = ["deny", "check", "licenses"]
+
+[tasks.deny-sources]
+description = "Ensure crates only come from trusted sources (crates.io, git, etc.)."
+command = "cargo"
+args = ["deny", "check", "sources"]
+
+[tasks.deny]
+description = "Run all cargo-deny checks: advisories + bans + licenses + sources (recommended for CI)."
+command = "cargo"
+args = ["deny", "check"]
 
 [tasks.outdated]
 description = "List outdated dependencies (requires cargo-outdated)."
-command     = "cargo"
-args        = ["outdated", "-R"]
+command = "cargo"
+args = ["outdated", "-R"]
 
 [tasks.udeps]
 description = "Detect unused dependencies (requires cargo-udeps + nightly toolchain)."
-command     = "cargo"
-args        = ["+nightly", "udeps", "--all-targets"]
+command = "cargo"
+args = ["+nightly", "udeps", "--all-targets"]
 
 [tasks.update]
 description = "Update Cargo.lock to latest compatible versions (mirrors Go `make update`)."
-command     = "cargo"
-args        = ["update"]
+command = "cargo"
+args = ["update"]
 
 [tasks.upgrade]
 description = "Upgrade Cargo.toml version constraints + update lock file (requires cargo-edit)."
-script = [
-    "cargo upgrade --incompatible",
-    "cargo update",
-]
+script = [  "cargo upgrade --incompatible",  "cargo update",]
 
 [tasks.update-toolchain]
 description = "Update Rust toolchain via rustup and refresh Cargo.lock."
-script = [
-    "rustup update",
-    "cargo update",
-]
+script = [  "rustup update",  "cargo update",]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE MIGRATIONS (sqlx)
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.migrate]
 description = "Run pending database migrations (requires sqlx-cli)."
-command     = "sqlx"
-args        = ["migrate", "run"]
+command = "sqlx"
+args = ["migrate", "run"]
 
 [tasks.migrate-revert]
 description = "Revert the last applied database migration (requires sqlx-cli)."
-command     = "sqlx"
-args        = ["migrate", "revert"]
+command = "sqlx"
+args = ["migrate", "revert"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WATCH — live-reload development (requires cargo-watch)
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.watch]
 description = "Recompile on every source file change (requires cargo-watch)."
-command     = "cargo"
-args        = ["watch", "-x", "build"]
+command = "cargo"
+args = ["watch", "-x", "build"]
 
 [tasks.watch-run]
 description = "Recompile and restart the service on file changes."
-command     = "cargo"
-args        = ["watch", "-x", "run --bin ${APP}"]
+command = "cargo"
+args = ["watch", "-x", "run --bin ${APP}"]
 
 [tasks.watch-test]
 description = "Re-run all tests on file changes."
-command     = "cargo"
-args        = ["watch", "-x", "test"]
+command = "cargo"
+args = ["watch", "-x", "test"]
 
 [tasks.watch-check]
 description = "Re-run `cargo check` on file changes (fastest feedback loop)."
-command     = "cargo"
-args        = ["watch", "-x", "check"]
+command = "cargo"
+args = ["watch", "-x", "check"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLEAN
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.clean]
 description = "Remove the `target/` build directory."
-command     = "cargo"
-args        = ["clean"]
+command = "cargo"
+args = ["clean"]
 
 [tasks.dist-clean]
 description = "Remove `target/` AND Cargo.lock (full reset)."
 dependencies = ["clean"]
-script = [
-    "rm -f Cargo.lock",
-    "echo 'dist-clean: target/ and Cargo.lock removed'",
-]
+script = [  "rm -f Cargo.lock",  "echo 'dist-clean: target/ and Cargo.lock removed'",]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CI GATE — single command for CI pipelines
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.ci]
-description  = "Full CI gate: fmt-check → clippy → test (mirrors `make all` in Go)."
+description = "Basic CI gate: fmt-check → clippy → test."
 dependencies = ["fmt-check", "clippy", "test"]
 
+[tasks.ci-security]
+description = "Security-focused CI: audit + full deny checks."
+dependencies = ["audit", "deny"]
+
 [tasks.ci-full]
-description  = "Extended CI gate: fmt-check → clippy → test → audit → doc-check."
-dependencies = ["fmt-check", "clippy", "test", "audit", "doc-check"]
+description = "Extended CI gate: fmt-check → clippy → test → audit → deny → doc-check."
+dependencies = ["fmt-check", "clippy", "test", "audit", "deny", "doc-check"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOCKER / DEPLOY
 # ─────────────────────────────────────────────────────────────────────────────
-
 [tasks.docker-build]
-description = "Build Docker image tagged as <APP>:<ENV>."
-script = [
-    "docker build -t ${APP}:${ENV} .",
-]
+description = "Build Docker image tagged as ${APP}:${ENV}."
+script = [  "docker build -t ${APP}:${ENV} .", ]
 
 [tasks.docker-run]
 description = "Run the service inside Docker with --env-file .env and port 8080 exposed."
 script = [
-    "docker run --rm -p 8080:8080 --env-file .env ${APP}:${ENV}",
+  "docker run --rm -p 8080:8080 --env-file .env ${APP}:${ENV}",
 ]

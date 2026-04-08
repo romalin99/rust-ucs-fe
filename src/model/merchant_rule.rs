@@ -108,7 +108,7 @@ pub struct QuestionInfo {
 
 /// Mirrors Go's `omitempty` for slices: skip when None OR empty.
 fn is_dropdown_empty(v: &Option<Vec<crate::model::template::DropdownItem>>) -> bool {
-    v.as_ref().map_or(true, |list| list.is_empty())
+    v.as_ref().is_none_or(|list| list.is_empty())
 }
 
 /// Single translation entry for a field ID.

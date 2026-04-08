@@ -138,19 +138,20 @@ fn extract_client_ip(req: &Request<Body>) -> String {
         for part in xff.split(',').rev() {
             let candidate = part.trim();
             // Parse once and reuse — avoids the second parse inside is_public_ip
-            if let Ok(addr) = candidate.parse::<IpAddr>() {
-                if !addr.is_loopback() && !is_private(&addr) {
-                    return candidate.to_string();
-                }
+            if let Ok(addr) = candidate.parse::<IpAddr>()
+                && !addr.is_loopback()
+                && !is_private(&addr)
+            {
+                return candidate.to_string();
             }
         }
     }
 
     // 2. X-Real-IP
-    if let Some(xrip) = headers.get("X-Real-IP").and_then(|v| v.to_str().ok()).map(str::trim) {
-        if is_public_ip(xrip) {
-            return xrip.to_string();
-        }
+    if let Some(xrip) = headers.get("X-Real-IP").and_then(|v| v.to_str().ok()).map(str::trim)
+        && is_public_ip(xrip)
+    {
+        return xrip.to_string();
     }
 
     // 3. Direct TCP peer address (mirrors Go's `c.IP()`)
