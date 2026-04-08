@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tracing::Instrument;
+
 use anyhow::Result;
 use redis::AsyncCommands;
 
@@ -13,6 +15,7 @@ use crate::client::mcs::{McsClient, PlayerHeaders, VerifyFinanceHistoryReq};
 use crate::client::uss::{CustomerPersonalInfoValue, UssClient};
 use crate::client::wps::WpsClient;
 use crate::error::AppError;
+use crate::masking::mask_value;
 use crate::model::merchant_rule::{MerchantRule, MerchantRuleConfig, Question, QuestionInfo};
 use crate::model::validation_record::{QA, QaMap, ValidationRecord};
 use crate::repository::{MerchantRuleRepository, ValidationRecordRepository};
@@ -477,13 +480,14 @@ impl PlayerVerificationService {
         let vr = self.validation_repo.clone();
         let cid = customer.value.customer_id.val;
         let mc = merchant_code.to_string();
+        let span = tracing::Span::current();
         tokio::spawn(async move {
             if let Err(e) = vr.insert(record).await {
                 tracing::warn!(error = %e, "insert validation record failed");
             } else {
                 tracing::info!(customer_id = cid, merchant_code = %mc, "insert success");
             }
-        });
+        }.instrument(span));
 
         let mut data = SubmitVerifyData {
             score_checked,
@@ -684,7 +688,7 @@ fn accurate_judgment_score<'a>(
             if let Some(uss_id) = get_uss_mapping_config_sync(field_id, raw_submitted) {
                 tracing::info!(
                     field_id = %field_id,
-                    raw_value = %raw_submitted,
+                    raw_value = %mask_value(field_id, raw_submitted),
                     uss_id = %uss_id,
                     "field id uss id mapping cache hit"
                 );
@@ -698,12 +702,15 @@ fn accurate_judgment_score<'a>(
             if submitted.is_empty() {
                 score = 0;
                 is_correct = false;
-                tracing::warn!(field_id = %field_id, expected = %expected_value, "bind=true empty value");
+                tracing::warn!(field_id = %field_id, expected = %mask_value(field_id, expected_value), "bind=true empty value");
             } else if ascii_eq_ignore_case(&submitted, expected_value) {
                 score = question_cfg.score;
                 is_correct = true;
                 tracing::info!(
-                    field_id = %field_id, submitted = %submitted, expected = %expected_value, score,
+                    field_id = %field_id,
+                    submitted = %mask_value(field_id, &submitted),
+                    expected = %mask_value(field_id, expected_value),
+                    score,
                     "bind=true matched"
                 );
             } else if !question_cfg.accuracy.is_empty() && question_cfg.accuracy != "exact" {
@@ -712,8 +719,11 @@ fn accurate_judgment_score<'a>(
                         score = question_cfg.score;
                         is_correct = true;
                         tracing::info!(
-                            field_id = %field_id, submitted = %submitted, expected = %expected_value,
-                            detail = %detail, score,
+                            field_id = %field_id,
+                            submitted = %mask_value(field_id, &submitted),
+                            expected = %mask_value(field_id, expected_value),
+                            detail = %detail,
+                            score,
                             "bind=true accuracy matched"
                         );
                     }
@@ -721,7 +731,9 @@ fn accurate_judgment_score<'a>(
                         score = 0;
                         is_correct = false;
                         tracing::warn!(
-                            field_id = %field_id, submitted = %submitted, expected = %expected_value,
+                            field_id = %field_id,
+                            submitted = %mask_value(field_id, &submitted),
+                            expected = %mask_value(field_id, expected_value),
                             detail = %detail,
                             "bind=true accuracy mismatched"
                         );
@@ -730,7 +742,9 @@ fn accurate_judgment_score<'a>(
                         score = 0;
                         is_correct = false;
                         tracing::warn!(
-                            field_id = %field_id, submitted = %submitted, expected = %expected_value,
+                            field_id = %field_id,
+                            submitted = %mask_value(field_id, &submitted),
+                            expected = %mask_value(field_id, expected_value),
                             error = %e,
                             "bind=true accuracy error"
                         );
@@ -740,7 +754,9 @@ fn accurate_judgment_score<'a>(
                 score = 0;
                 is_correct = false;
                 tracing::warn!(
-                    field_id = %field_id, submitted = %submitted, expected = %expected_value,
+                    field_id = %field_id,
+                    submitted = %mask_value(field_id, &submitted),
+                    expected = %mask_value(field_id, expected_value),
                     "bind=true mismatched"
                 );
             }
@@ -749,14 +765,17 @@ fn accurate_judgment_score<'a>(
                 score = empty_score;
                 is_correct = true;
                 tracing::info!(
-                    field_id = %field_id, expected = %expected_value, empty_score,
+                    field_id = %field_id,
+                    expected = %mask_value(field_id, expected_value),
+                    empty_score,
                     "bind=false matched"
                 );
             } else {
                 score = 0;
                 is_correct = false;
                 tracing::warn!(
-                    field_id = %field_id, expected = %expected_value,
+                    field_id = %field_id,
+                    expected = %mask_value(field_id, expected_value),
                     "bind=false mismatched"
                 );
             }

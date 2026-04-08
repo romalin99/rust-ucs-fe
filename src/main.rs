@@ -24,6 +24,7 @@ mod config;
 mod error;
 mod handler;
 mod infra;
+mod masking;
 mod middleware;
 mod model;
 mod observability;

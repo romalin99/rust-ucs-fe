@@ -250,9 +250,13 @@ pub fn build_router(state: Arc<AppState>, quick_timeout_secs: u64) -> Router {
                 .layer(middleware::from_fn(behavior_logger)),
         );
 
+    // trace_id propagation is unconditional (mirrors Go's BehaviorLogger which
+    // always sets CtxTraceID in context.Context regardless of OTel config).
+    // The `telemetry_enabled` flag controls the OTel *exporter*, not trace_id
+    // propagation in logs.
+    base = base.layer(middleware::from_fn(otel_trace));
     if telemetry_enabled {
-        base = base.layer(middleware::from_fn(otel_trace));
-        tracing::info!("otel_trace middleware enabled");
+        tracing::info!("otel exporter enabled");
     }
 
     let base = base.with_state(state);

@@ -31,6 +31,7 @@ use serde_json::{Map, Value};
 use tracing::{
     Event, Subscriber,
     field::{Field, Visit},
+    span,
 };
 use tracing_subscriber::{
     EnvFilter, Layer,
@@ -315,6 +316,86 @@ impl Visit for FieldCollector {
     }
 }
 
+// ── TraceIdLayer: typed trace_id storage ─────────────────────────────────────
+//
+// Mirrors Go's `appendContextFields` which extracts `trace_id` from
+// `context.Context` and appends it to every log line.
+//
+// Go sets trace_id via `context.WithValue(ctx, CtxTraceID, traceID)` in
+// `BehaviorLogger.Handle()`, and every `writeLog()` reads it back.
+//
+// In Rust, the `otel_trace` middleware creates a `tracing::info_span!` with a
+// `trace_id` field.  `TraceIdLayer` intercepts `on_new_span` and stores the
+// value in a typed `TraceIdExt` extension.  The formatters then read it back
+// without any string parsing.
+
+/// Typed wrapper stored in span extensions — avoids fragile string parsing.
+struct TraceIdExt(String);
+
+/// Visitor that extracts the `trace_id` field value from span attributes.
+struct TraceIdVisitor(Option<String>);
+
+impl Visit for TraceIdVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "trace_id" {
+            self.0 = Some(value.to_owned());
+        }
+    }
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "trace_id" {
+            // Display-formatted fields (%trace_id) arrive here as Debug.
+            // Strip surrounding quotes if present.
+            let raw = format!("{value:?}");
+            self.0 = Some(raw.trim_matches('"').to_owned());
+        }
+    }
+}
+
+/// A `tracing_subscriber::Layer` that captures `trace_id` from span
+/// attributes and stores it as a typed `TraceIdExt` in span extensions.
+///
+/// Add this layer to the subscriber **before** the `fmt::Layer` so that
+/// `TraceIdExt` is available when `format_event` is called.
+pub struct TraceIdLayer;
+
+impl<S> Layer<S> for TraceIdLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut visitor = TraceIdVisitor(None);
+        attrs.record(&mut visitor);
+        if let Some(tid) = visitor.0 {
+            if let Some(span) = ctx.span(id) {
+                span.extensions_mut().insert(TraceIdExt(tid));
+            }
+        }
+    }
+}
+
+// ── Span trace-ID extractor ─────────────────────────────────────────────────
+
+/// Walk the parent-span chain and return the first `trace_id` value found.
+///
+/// Reads the typed `TraceIdExt` stored by `TraceIdLayer`, which is 100%
+/// reliable (no string parsing).
+fn span_trace_id<S, N>(ctx: &FmtContext<'_, S, N>) -> Option<String>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    let scope = ctx.event_scope()?;
+    for span in scope {
+        let ext = span.extensions();
+        if let Some(TraceIdExt(tid)) = ext.get::<TraceIdExt>() {
+            if !tid.is_empty() && tid != "unknown" {
+                return Some(tid.clone());
+            }
+        }
+    }
+    None
+}
+
 // ── JSON formatter ────────────────────────────────────────────────────────────
 
 /// Structured JSON log line.
@@ -335,7 +416,7 @@ where
 {
     fn format_event(
         &self,
-        _ctx: &FmtContext<'_, S, N>,
+        ctx: &FmtContext<'_, S, N>,
         mut writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
@@ -343,6 +424,13 @@ where
 
         let mut collector = FieldCollector(Map::with_capacity(8));
         event.record(&mut collector);
+
+        // Inject trace_id from parent span — mirrors Go's appendContextFields.
+        if !collector.0.contains_key("trace_id") {
+            if let Some(tid) = span_trace_id(ctx) {
+                collector.0.insert("trace_id".to_string(), Value::String(tid));
+            }
+        }
 
         // Promote "message" to top-level.
         let message = collector.0.remove("message").unwrap_or(Value::String(String::new()));
@@ -408,7 +496,7 @@ where
 {
     fn format_event(
         &self,
-        _ctx: &FmtContext<'_, S, N>,
+        ctx: &FmtContext<'_, S, N>,
         mut writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
@@ -416,6 +504,13 @@ where
 
         let mut collector = FieldCollector(Map::with_capacity(8));
         event.record(&mut collector);
+
+        // Inject trace_id from parent span — mirrors Go's appendContextFields.
+        if !collector.0.contains_key("trace_id") {
+            if let Some(tid) = span_trace_id(ctx) {
+                collector.0.insert("trace_id".to_string(), Value::String(tid));
+            }
+        }
 
         // Promote "message".
         let message = collector
@@ -448,14 +543,20 @@ where
         )?;
 
         // Extra fields as `| key=val, key2=val2`
-        // Mirrors Go's `encodeFields`.
+        // Mirrors Go's `encodeFields` — string values are unquoted.
         if !collector.0.is_empty() {
             write!(writer, " |")?;
             let mut first = true;
             for (k, v) in &collector.0 {
                 write!(writer, "{}", if first { " " } else { ", " })?;
                 first = false;
-                write!(writer, "{k}={v}")?;
+                // Go's encodeFields prints strings without quotes.
+                // serde_json::Value::String renders as `"val"`, so strip them.
+                if let Some(s) = v.as_str() {
+                    write!(writer, "{k}={s}")?;
+                } else {
+                    write!(writer, "{k}={v}")?;
+                }
             }
         }
 
@@ -485,6 +586,14 @@ pub fn init_tracing(cfg: &LogConfig) {
     let buf_writer = init_buffered_writer(cfg);
     let behavior_writer = init_behavior_writer(cfg);
 
+    // TraceIdLayer intercepts on_new_span and stores trace_id as a typed
+    // TraceIdExt in span extensions.  Must be registered BEFORE the fmt layers
+    // so that TraceIdExt is available when format_event runs.
+    //
+    // This is the Rust equivalent of Go's:
+    //   c.SetContext(context.WithValue(c.Context(), constant.CtxTraceID, traceID))
+    // in BehaviorLogger.Handle().
+
     // Main stdout layer excludes behavior events (they go to file only).
     // Behavior file layer only captures target="behavior" events.
     if cfg.encoding == "json" {
@@ -502,6 +611,7 @@ pub fn init_tracing(cfg: &LogConfig) {
 
         let _ = tracing_subscriber::registry()
             .with(env_filter)
+            .with(TraceIdLayer)
             .with(main_layer)
             .with(behavior_layer)
             .try_init();
@@ -520,6 +630,7 @@ pub fn init_tracing(cfg: &LogConfig) {
 
         let _ = tracing_subscriber::registry()
             .with(env_filter)
+            .with(TraceIdLayer)
             .with(main_layer)
             .with(behavior_layer)
             .try_init();

@@ -42,18 +42,25 @@ pub async fn otel_trace(req: Request<Body>, next: Next) -> Response {
     }
 
     // Extract trace propagation headers.
-    let trace_id = req
-        .headers()
-        .get("traceparent")
-        .or_else(|| req.headers().get("x-trace-id"))
-        .or_else(|| req.headers().get("uber-trace-id"))
+    // Priority mirrors Go's extractTraceIDs:
+    //   1. X-App-Trace-ID (WPS Relay canonical header — highest priority)
+    //   2. X-Trace-Id
+    //   3. traceparent (W3C)
+    //   4. uber-trace-id (Jaeger)
+    //   5. "unknown" fallback
+    let headers = req.headers();
+    let trace_id = headers
+        .get("X-App-Trace-ID")
+        .or_else(|| headers.get("X-Trace-Id"))
+        .or_else(|| headers.get("traceparent"))
+        .or_else(|| headers.get("uber-trace-id"))
         .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
         .unwrap_or("unknown")
         .to_string();
 
-    let span_id = req
-        .headers()
-        .get("x-span-id")
+    let span_id = headers
+        .get("X-Span-Id")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown")
         .to_string();

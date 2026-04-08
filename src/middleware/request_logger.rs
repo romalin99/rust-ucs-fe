@@ -2,9 +2,10 @@
 ///
 /// Full port of Go's `internal/middleware/logger.go` (`BehaviorLogger`).
 ///
-/// Final log line (same wire format as Go):
+/// Log lines (mirrors Go wire format):
 /// ```text
-/// [2026-03-17 10:00:00.000] [ucs-fe] [INFO ] [request_logger.rs:XX] - [traceID/spanID] [API-REQUEST] [END] URI: /path, Method: POST, Status: 200, Addr: 1.2.3.4, Elapsed: 5ms
+/// [API-REQUEST] [START] method=POST uri=/path body={"customerName":"john","data":[...]} addr=1.2.3.4
+/// [traceID/spanID] [API-REQUEST] URI: /path, Method: POST, Status: 200, Addr: 1.2.3.4, Elapsed: 5ms
 /// ```
 ///
 /// Level routing matches Go's `logRequest`:
@@ -13,11 +14,31 @@
 /// Skip list is identical to Go's:
 ///   `/test/`, `/metrics`, `/swagger`, `/favicon.ico`, `/health`,
 ///   `/livez`, `/readyz`, `/ping`, `/monitor`
+///
+/// Header priority for trace IDs (mirrors Go's `extractTraceIDs`):
+///   1. `X-App-Trace-ID` (WPS Relay canonical trace header) / `X-Span-Id`
+///   2. `X-Trace-Id` / `X-Span-Id`
+///   3. W3C `traceparent`
+///   4. Jaeger `uber-trace-id`
+///   5. Fallback: `"unknown"`
+///
+/// Header priority for client IP (mirrors Go's `getClientIP`):
+///   1. `CustomerIP` (WPS Relay Pass Header — already resolved by relay)
+///   2. `X-Forwarded-For` rightmost public IP
+///   3. `X-Real-IP` public IP
+///   4. TCP peer address (`ConnectInfo`)
 use axum::{
-    body::Body, extract::ConnectInfo, extract::Request, middleware::Next, response::Response,
+    body::Body,
+    extract::ConnectInfo,
+    extract::Request,
+    middleware::Next,
+    response::Response,
 };
+use http_body_util::BodyExt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
+
+use crate::masking::mask_request_body;
 
 static SKIP_PATHS: &[&str] = &[
     "/test/",
@@ -32,62 +53,107 @@ static SKIP_PATHS: &[&str] = &[
 ];
 
 /// Axum middleware that logs each API request to the behavior log target.
-///
-/// `tracing` macros are called **directly** in this function (not through
-/// wrapper functions) so that the file/line metadata points here, matching
-/// Go's `zap.AddCallerSkip(1)` which shows the middleware as caller.
 pub async fn behavior_logger(req: Request<Body>, next: Next) -> Response {
-    // Check skip-path with borrowed &str — no allocation needed for skipped paths
-    if SKIP_PATHS.iter().any(|p| req.uri().path().contains(p)) {
+    // Check skip-path — use HasPrefix semantics like Go (not Contains).
+    let path = req.uri().path().to_owned();
+    if SKIP_PATHS.iter().any(|p| path.starts_with(p)) {
         return next.run(req).await;
     }
 
-    // Only allocate for non-skipped (business API) requests
-    let path = req.uri().path().to_string();
     let method = req.method().clone();
-
     let client_ip = extract_client_ip(&req);
     let (trace_id, span_id) = extract_trace_ids(&req);
+
+    // ── [START] log incoming request body (mirrors Go's logIncomingRequest) ──
+    // We read the body bytes here, log them (masked), then put them back so the
+    // handler can still read them.  axum::body::to_bytes buffers the full body.
+    let (parts, body) = req.into_parts();
+
+    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .unwrap_or_default();
+
+    if !body_bytes.is_empty() {
+        let masked = mask_request_body(&body_bytes);
+        let masked_str = String::from_utf8_lossy(&masked);
+        tracing::info!(
+            "[API-REQUEST] [START] method={method} uri={path} body={masked_str} addr={client_ip}"
+        );
+    } else {
+        tracing::info!("[API-REQUEST] [START] method={method} uri={path} addr={client_ip}");
+    }
+
+    // Reconstruct the request with the original body bytes.
+    let req = Request::from_parts(parts, Body::from(body_bytes));
 
     let start = Instant::now();
     let response = next.run(req).await;
     let elapsed = start.elapsed().as_millis();
     let status = response.status().as_u16();
 
-    let msg = format!(
-        "[{trace_id}/{span_id}] [API-REQUEST] [END] URI: {path}, Method: {method}, Status: {status}, Addr: {client_ip}, Elapsed: {elapsed}ms",
+    // ── Buffer response body for logging (mirrors Go's `c.Response().Body()`) ──
+    let (parts, body) = response.into_parts();
+    let resp_bytes = body
+        .collect()
+        .await
+        .map(|collected| collected.to_bytes())
+        .unwrap_or_default();
+
+    let resp_body_str = String::from_utf8_lossy(&resp_bytes);
+
+    // ── [API-RESPONSE] [END] — mirrors Go's logRequest second half ──────────
+    // Format: [API-RESPONSE] [END] method=POST uri=/path status=200 elapsed=123ms addr=1.2.3.4 body={...}
+    let end_msg = format!(
+        "[API-RESPONSE] [END] method={method} uri={path} status={status} elapsed={elapsed}ms addr={client_ip} body={resp_body_str}",
     );
 
-    // Call tracing macros DIRECTLY so file:line points to this middleware,
-    // not to a wrapper function in logs.rs.
     match status {
-        s if s >= 500 => tracing::error!(target: "behavior", "{msg}"),
-        400..=499 => tracing::warn!(target: "behavior", "{msg}"),
-        _ => tracing::info!(target: "behavior", "{msg}"),
+        s if s >= 500 => tracing::error!("{end_msg}"),
+        400..=499 => tracing::warn!("{end_msg}"),
+        _ => tracing::info!("{end_msg}"),
     }
 
-    response
+    // ── Behavior log (to file) ──────────────────────────────────────────────
+    let behavior_msg = format!(
+        "[{trace_id}/{span_id}] [API-REQUEST] URI: {path}, Method: {method}, Status: {status}, Addr: {client_ip}, Elapsed: {elapsed}ms",
+    );
+
+    match status {
+        s if s >= 500 => tracing::error!(target: "behavior", "{behavior_msg}"),
+        400..=499 => tracing::warn!(target: "behavior", "{behavior_msg}"),
+        _ => tracing::info!(target: "behavior", "{behavior_msg}"),
+    }
+
+    // Reconstruct response with the buffered body.
+    Response::from_parts(parts, Body::from(resp_bytes))
 }
 
 // ── Trace ID extraction ───────────────────────────────────────────────────────
 
 /// Extract (traceID, spanID) from the request.
 ///
-/// Strategy (mirrors Go's `extractTraceIDs` priority):
-///   1. OpenTelemetry span context (Go: `trace.SpanFromContext(ctx)`)
-///      — Not available without `tracing-opentelemetry`; skip for now.
-///   2. `X-Trace-Id` / `X-Span-Id` explicit headers
+/// Priority (mirrors Go's `extractTraceIDs`):
+///   1. `X-App-Trace-ID` (WPS Relay canonical header) + `X-Span-Id`
+///   2. `X-Trace-Id` + `X-Span-Id`
 ///   3. W3C `traceparent`: `"00-<traceID>-<spanID>-<flags>"`
 ///   4. Jaeger `uber-trace-id`: `"<traceID>:<spanID>:<parentID>:<flags>"`
-///   5. Generate a UUID v4 as request-scoped traceID (ensures every log
-///      line is traceable even without upstream propagation).
-///
-/// Go falls back to `"unknown"` in step 5, but generating a UUID per
-/// request is strictly better for production debugging.
+///   5. `"unknown"` fallback (same as Go)
 fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
     let headers = req.headers();
 
-    // 1. Explicit X-Trace-Id / X-Span-Id headers
+    // 1. X-App-Trace-ID (WPS Relay canonical trace header — highest priority)
+    if let Some(app_trace) = headers.get("X-App-Trace-ID").and_then(|v| v.to_str().ok()) {
+        if !app_trace.is_empty() {
+            let span = headers
+                .get("X-Span-Id")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("unknown")
+                .to_string();
+            return (app_trace.to_string(), span);
+        }
+    }
+
+    // 2. X-Trace-Id / X-Span-Id
     let x_trace = headers.get("X-Trace-Id").and_then(|v| v.to_str().ok());
     let x_span = headers.get("X-Span-Id").and_then(|v| v.to_str().ok());
     if x_trace.is_some() || x_span.is_some() {
@@ -97,7 +163,7 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
         );
     }
 
-    // 2. W3C traceparent: "00-<traceID>-<spanID>-<flags>"
+    // 3. W3C traceparent: "00-<traceID>-<spanID>-<flags>"
     if let Some(tp) = headers.get("traceparent").and_then(|v| v.to_str().ok()) {
         let parts: Vec<&str> = tp.splitn(4, '-').collect();
         if parts.len() == 4 {
@@ -105,7 +171,7 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
         }
     }
 
-    // 3. Jaeger uber-trace-id: "<traceID>:<spanID>:<parentID>:<flags>"
+    // 4. Jaeger uber-trace-id: "<traceID>:<spanID>:<parentID>:<flags>"
     if let Some(j) = headers.get("uber-trace-id").and_then(|v| v.to_str().ok()) {
         let parts: Vec<&str> = j.splitn(4, ':').collect();
         if parts.len() >= 2 {
@@ -113,34 +179,38 @@ fn extract_trace_ids(req: &Request<Body>) -> (String, String) {
         }
     }
 
-    // 4. Generate IDs conforming to W3C / OTel wire format so logs are
-    //    consistent whether upstream propagation is present or not.
-    //    trace_id = 32 hex chars, span_id = 16 hex chars.
-    let raw1 = uuid::Uuid::new_v4().as_u128();
-    let raw2 = uuid::Uuid::new_v4().as_u128();
-    let trace_id = format!("{raw1:032x}");
-    #[allow(clippy::cast_possible_truncation)]
-    let span_id = format!("{:016x}", raw2 as u64);
-    (trace_id, span_id)
+    // 5. Fallback (mirrors Go's "unknown")
+    ("unknown".to_string(), "unknown".to_string())
 }
 
 // ── Client IP extraction ──────────────────────────────────────────────────────
 
 /// Return the most reliable client IP for this request.
 ///
-/// Strategy (mirrors Go's `getClientIP`):
-///   1. `X-Forwarded-For` right-to-left → first public IP
-///   2. `X-Real-IP` → if public
-///   3. `ConnectInfo<SocketAddr>` → TCP peer address (Go's `c.IP()`)
-///   4. `"-"` fallback
+/// Priority (mirrors Go's `getClientIP`):
+///   1. `CustomerIP` header — WPS Relay Pass Header (relay pre-resolves the real IP)
+///   2. `X-Forwarded-For` rightmost public IP
+///   3. `X-Real-IP` public IP
+///   4. TCP peer address (`ConnectInfo<SocketAddr>`)
+///   5. `"-"` fallback
 fn extract_client_ip(req: &Request<Body>) -> String {
     let headers = req.headers();
 
-    // 1. X-Forwarded-For — rightmost public IP
+    // 1. CustomerIP (WPS Relay Pass Header — authoritative when present)
+    if let Some(cip) = headers
+        .get("CustomerIP")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+    {
+        if !cip.is_empty() {
+            return cip.to_string();
+        }
+    }
+
+    // 2. X-Forwarded-For — rightmost public IP
     if let Some(xff) = headers.get("X-Forwarded-For").and_then(|v| v.to_str().ok()) {
         for part in xff.split(',').rev() {
             let candidate = part.trim();
-            // Parse once and reuse — avoids the second parse inside is_public_ip
             if let Ok(addr) = candidate.parse::<IpAddr>()
                 && !addr.is_loopback()
                 && !is_private(&addr)
@@ -150,15 +220,14 @@ fn extract_client_ip(req: &Request<Body>) -> String {
         }
     }
 
-    // 2. X-Real-IP
+    // 3. X-Real-IP
     if let Some(xrip) = headers.get("X-Real-IP").and_then(|v| v.to_str().ok()).map(str::trim)
         && is_public_ip(xrip)
     {
         return xrip.to_string();
     }
 
-    // 3. Direct TCP peer address (mirrors Go's `c.IP()`)
-    //    Available because main.rs uses `into_make_service_with_connect_info`.
+    // 4. Direct TCP peer address
     if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
         return addr.ip().to_string();
     }
@@ -175,8 +244,6 @@ fn is_public_ip(ip: &str) -> bool {
 }
 
 /// Mirrors Go 1.17+ `net.IP.IsPrivate()`.
-/// Go's `IsPrivate` covers RFC 1918 (10.x, 172.16-31.x, 192.168.x) and `fc00::/7`,
-/// but NOT link-local (169.254.x.x / `fe80::/10`).
 const fn is_private(addr: &IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => v4.is_private(),
