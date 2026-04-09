@@ -1,15 +1,96 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // xtask — cargo xtask task runner for ucs-fe
 //
-// Replaces Makefile.toml (cargo-make) with a pure-Rust, zero-external-dependency
-// task runner invoked via `cargo xtask <command>`.
+// Replaces Makefile.toml (cargo-make) with a pure-Rust task runner invoked
+// via `cargo xtask <command>`.
 //
 // Usage:
-//   cargo xtask              # default: fmt-check → build
-//   cargo xtask help         # show all commands
-//   cargo xtask build        # compile debug binary
-//   cargo xtask ci           # fmt-check → clippy → test
-//   ... (see `cargo xtask --help` for full list)
+// ── DEFAULT ──────────────────────────────────────────────────────────────
+// cargo xtask                  # fmt-check → debug build (default)
+// cargo xtask --help           # list all available commands
+//
+// ── BUILD ────────────────────────────────────────────────────────────────
+// cargo xtask build            # compile debug binary
+// cargo xtask debug            # alias for build
+// cargo xtask release          # compile release binary (--locked)
+// cargo xtask build-all        # compile ALL targets (debug)
+// cargo xtask release-all      # compile ALL targets (release, --locked)
+//
+// ── RUN ──────────────────────────────────────────────────────────────────
+// cargo xtask run              # run debug binary (ENV=dev)
+// cargo xtask run-release      # run release binary
+// cargo xtask run-dev          # run with ENV=dev
+// cargo xtask run-sit          # run with ENV=sit
+// cargo xtask run-prod         # run with ENV=prod (caution)
+//
+// ── CODE QUALITY ─────────────────────────────────────────────────────────
+// cargo xtask fmt              # format all source files
+// cargo xtask fmt-check        # check formatting (CI)
+// cargo xtask clippy           # run Clippy linter (deny warnings)
+// cargo xtask lint             # alias for clippy
+// cargo xtask clippy-fix       # auto-apply Clippy fixes
+// cargo xtask optimize         # clippy-fix → fmt → clippy (verify)
+// cargo xtask check            # fast cargo check
+//
+// ── TESTS ────────────────────────────────────────────────────────────────
+// cargo xtask test             # run all tests (--all-targets --locked)
+// cargo xtask testv            # run tests with stdout visible
+// cargo xtask test-release     # run tests in release mode
+// cargo xtask nextest          # run tests with cargo-nextest
+// cargo xtask bench            # run benchmarks
+// cargo xtask cover            # generate HTML coverage report
+//
+// ── DOCS ─────────────────────────────────────────────────────────────────
+// cargo xtask doc              # build docs (private items) + open
+// cargo xtask doc-check        # build docs without opening (CI)
+//
+// ── SECURITY & DEPENDENCIES ──────────────────────────────────────────────
+// cargo xtask audit            # check CVEs in dependencies
+// cargo xtask deny             # run all cargo-deny checks
+// cargo xtask deny-init        # initialize deny.toml template
+// cargo xtask deny-advisories  # check for security advisories
+// cargo xtask deny-bans        # check for banned crates
+// cargo xtask deny-licenses    # check dependency licenses
+// cargo xtask deny-sources     # check crate sources
+// cargo xtask security         # alias for ci-security (audit + deny)
+// cargo xtask outdated         # list outdated dependencies
+// cargo xtask udeps            # detect unused dependencies (nightly)
+// cargo xtask update           # update Cargo.lock
+// cargo xtask upgrade          # upgrade Cargo.toml constraints (⚠ see warning)
+// cargo xtask update-toolchain # rustup update + cargo update
+//
+// ── DATABASE MIGRATIONS ──────────────────────────────────────────────────
+// cargo xtask migrate          # run pending migrations (sqlx)
+// cargo xtask migrate-revert   # revert last migration (sqlx)
+//
+// ── WATCH ────────────────────────────────────────────────────────────────
+// cargo xtask watch            # recompile on file changes
+// cargo xtask watch-run        # recompile + restart on file changes
+// cargo xtask watch-test       # re-run tests on file changes
+// cargo xtask watch-check      # re-run cargo check on file changes
+//
+// ── CLEAN ────────────────────────────────────────────────────────────────
+// cargo xtask clean            # remove target/
+// cargo xtask dist-clean       # remove target/ + Cargo.lock
+//
+// ── CI ───────────────────────────────────────────────────────────────────
+// cargo xtask ci               # fmt-check → clippy → test
+// cargo xtask ci-security      # audit + deny
+// cargo xtask security         # alias for ci-security
+// cargo xtask ci-full          # fmt-check → clippy → test → audit → deny → doc-check
+//
+// ── DOCKER ───────────────────────────────────────────────────────────────
+// cargo xtask docker-build     # docker build -t <APP>:<ENV> .
+// cargo xtask docker-run       # docker run -p 8080:8080 --env-file .env
+//
+// ── STATISTICS ───────────────────────────────────────────────────────────
+// cargo xtask stats            # lines-of-code summary
+// cargo xtask stats-detail     # per-file lines-of-code
+// cargo xtask status           # alias for stats
+//
+// ── SETUP ────────────────────────────────────────────────────────────────
+// cargo xtask install          # install all recommended cargo tools
+// cargo xtask version          # print Rust toolchain versions
 // ─────────────────────────────────────────────────────────────────────────────
 
 use clap::{Parser, Subcommand};

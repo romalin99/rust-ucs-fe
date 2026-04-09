@@ -47,6 +47,10 @@
 # cargo make audit            # check CVEs in dependencies
 # cargo make deny             # run all cargo-deny checks
 # cargo make deny-init        # initialize deny.toml template
+# cargo make deny-advisories  # check for security advisories
+# cargo make deny-bans        # check for banned crates
+# cargo make deny-licenses    # check dependency licenses
+# cargo make deny-sources     # check crate sources
 # cargo make security         # alias for ci-security (audit + deny)
 # cargo make outdated         # list outdated dependencies
 # cargo make udeps            # detect unused dependencies (nightly)
