@@ -1,3 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
 [build]
 # 使用原生CPU优化（提升10-20%性能）
 rustflags = ["-C", "target-cpu=native"]
